@@ -208,6 +208,7 @@ module module_params
         logical :: debug_wavelet_reconstruct = .false., debug_sync = .false., debug_pruned2full = .false.
         logical :: debug_poisson = .false.
         logical :: no_loadbalance_after_adapt_tree = .false.
+        logical :: save_data_before_adapt_tree = .false.
 
         integer :: verbose_level = 1
 

@@ -64,7 +64,7 @@ module module_acm
     real(kind=rk) :: dx_min = -1.0_rk
     ! Forces for the different colors
     ! These are computed and used only in statistics output
-    real(kind=rk), allocatable :: force_color(:,:), moment_color(:,:)
+    real(kind=rk), allocatable :: force_color(:,:), moment_color(:,:), usolid_max_color(:,:), usolid_min_color(:,:)
     real(kind=rk) :: gamma_p
     logical :: penalization, compute_flow=.true.
     ! sponge term:
@@ -603,7 +603,7 @@ contains
     enddo
 
     ! now initialze force arrays for colors at last, because we know how many colors we have
-    allocate( params_acm%force_color(1:3, 1:ncolors), params_acm%moment_color(1:3, 1:ncolors), params_acm%mask_volume(1:ncolors) )
+    allocate( params_acm%force_color(1:3, 1:ncolors), params_acm%moment_color(1:3, 1:ncolors), params_acm%mask_volume(1:ncolors), params_acm%usolid_max_color(1:3, 1:ncolors), params_acm%usolid_min_color(1:3, 1:ncolors) )
 
     params_acm%initialized = .true.
   end subroutine READ_PARAMETERS_ACM
@@ -813,6 +813,19 @@ contains
       if (params_acm%penalization .or. params_acm%use_sponge) then
         call init_t_file('forces.t', overwrite, (/ "           time", "   sum_forces_X", "   sum_forces_Y", "   sum_forces_Z"/))
         call init_t_file('moments.t', overwrite, (/ "           time", "  sum_moments_X", "  sum_moments_Y", "  sum_moments_Z"/))
+
+        ! max/min for usolid
+        do i_color = 1, ncolors
+            write(headers((i_color-1)*3 + 2),"(A,i0.3,A)") "color", i_color, ":ux_solid_max"
+            write(headers((i_color-1)*3 + 3),"(A,i0.3,A)") "color", i_color, ":uy_solid_max"
+            write(headers((i_color-1)*3 + 4),"(A,i0.3,A)") "color", i_color, ":uz_solid_max"
+        enddo
+        do i_color = 1, ncolors
+            write(headers((i_color-1)*3 + 2),"(A,i0.3,A)") "color", i_color, ":ux_solid_min"
+            write(headers((i_color-1)*3 + 3),"(A,i0.3,A)") "color", i_color, ":uy_solid_min"
+            write(headers((i_color-1)*3 + 4),"(A,i0.3,A)") "color", i_color, ":uz_solid_min"
+        enddo
+        call init_t_file('usolid_color.t', overwrite, headers(1:6*ncolors+1) )
 
         ! Initialization of header for different colors. Format: color1:force_g_x -> the g is to remind us that those are in the global system
         do i_color = 1, ncolors

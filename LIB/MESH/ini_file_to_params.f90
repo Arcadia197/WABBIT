@@ -225,6 +225,9 @@ subroutine ini_file_to_params( params, filename )
    ! However, for very large grids (>50k blocks) the loadbalance will become very expensive. As experimental feature, we can do only loadbalance 1) and 2), as 3) only concerns saving.
    call read_param_mpi(FILE, 'Debug', 'no_loadbalance_after_adapt_tree', params%no_loadbalance_after_adapt_tree, .false.)
 
+   ! save data before adapt_tree instead of afterwards for debugging purposes
+   call read_param_mpi(FILE, 'Debug', 'save_data_before_adapt_tree', params%save_data_before_adapt_tree, .false.)
+
    ! Hack.
    ! Small ascii files are written with the module_t_files, which is just a buffered wrapper.
    ! Instead of directly dumping the files to disk, it collects data and flushes after "flush_frequency"

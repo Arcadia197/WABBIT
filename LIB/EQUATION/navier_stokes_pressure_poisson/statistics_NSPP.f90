@@ -110,6 +110,8 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
         params_nspp%force_color = 0.0_rk
         params_nspp%meanflow_channel = 0.0_rk
         params_nspp%moment_color = 0.0_rk
+        params_nspp%usolid_max_color = -1.0e9_rk
+        params_nspp%usolid_min_color = 1.0e9_rk
         params_nspp%e_kin = 0.0_rk
         params_nspp%enstrophy = 0.0_rk
         params_nspp%max_vort = 0.0_rk
@@ -117,8 +119,8 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
         params_nspp%mask_volume = 0.0_rk
         params_nspp%sponge_volume = 0.0_rk
         params_nspp%u_residual = 0.0_rk
-        params_nspp%div_max = 0.0_rk
-        params_nspp%div_min = 0.0_rk
+        params_nspp%div_max = -1.0e9_rk
+        params_nspp%div_min = 1.0e9_rk
         params_nspp%penal_power = 0.0_rk
         params_nspp%scalar_removal = 0.0_rk
         params_nspp%dissipation = 0.0_rk
@@ -279,6 +281,10 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
                         ! forces acting on this color
                         force_block(1:params_nspp%dim, color) = force_block(1:params_nspp%dim, color) - penal(1:params_nspp%dim)
 
+                        ! usolid max/min for this color
+                        params_nspp%usolid_max_color(1:params_nspp%dim, color) = max( params_nspp%usolid_max_color(1:params_nspp%dim, color), mask(ix,iy,iz,2:params_nspp%dim+1))
+                        params_nspp%usolid_min_color(1:params_nspp%dim, color) = min( params_nspp%usolid_min_color(1:params_nspp%dim, color), mask(ix,iy,iz,2:params_nspp%dim+1))
+
                         if (params_nspp%dim == 3) then
                             ! moment with color-dependent lever
                             x_lev(1:3) = (/x, y, z/) - x0_moment(1:3, color)
@@ -387,6 +393,10 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
             ! volume of sponge
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%sponge_volume, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
 
+            ! usolid max/min
+            call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%usolid_max_color, size(params_nspp%usolid_max_color), MPI_DOUBLE_PRECISION, MPI_MAX, WABBIT_COMM, mpierr)
+            call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%usolid_min_color, size(params_nspp%usolid_min_color), MPI_DOUBLE_PRECISION, MPI_MIN, WABBIT_COMM, mpierr)
+
             ! force & moment
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%force_color, size(params_nspp%force_color), MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%moment_color, size(params_nspp%moment_color), MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
@@ -482,6 +492,9 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
 
                 ! save moment for each color in one file
                 call append_t_file( "moments_color.t", (/time, reshape(params_nspp%moment_color(:,:), (/ 3*ncolors/))/) )
+
+                ! usolid max/min for each color in one file
+                call append_t_file( "usolid_color.t", (/time, reshape(params_nspp%usolid_max_color(:,:), (/3*ncolors/) ), reshape(params_nspp%usolid_min_color(:,:), (/3*ncolors/) ) /) )
 
                 if (is_insect) then
                     call append_t_file( 'aero_power.t', (/time, apowtotal(:), ipowtotal(:)/) )
