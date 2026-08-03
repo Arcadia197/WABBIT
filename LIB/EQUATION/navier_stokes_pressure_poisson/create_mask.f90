@@ -66,36 +66,10 @@ subroutine create_mask_3D_nspp( time, x0, dx, Bs, g, mask, stage )
                 call draw_free_sphere(x0, dx, Bs, g, mask, insect_id, i_geom=i_geom)
             endif
 
-        case ('active-grid')
-            !-----------------------------------------------------------------------
-            ! ACTIVE GRID
-            !-----------------------------------------------------------------------
-            if (stage == "time-dependent-part" .or. stage == "all-parts") then
-                ! active grids are always time-dependent
-                call get_insect_id(i_geom, insect_id)  ! retrieve the id of the insect
-                call draw_active_grid_winglets(time, insect_id, x0-dble(g)*dx, dx, &
-                mask(:,:,:,1), mask(:,:,:,5), mask(:,:,:,2:4))
-            endif
-
-
         case ('insect')
             !-----------------------------------------------------------------------
             ! INSECT MODULE
             !-----------------------------------------------------------------------
-            ! the insects require us to determine their state vector before they can be drawn
-            ! as this is to do only once, not for all blocks
-            ! 18 Feb 2021: deactivated the call here because it is (more efficiently) done in module_mask.f90
-            ! This is important as for FSI problems the mask function at TIME may have to be recomputed even if we
-            ! already computed it at this time!! Think of RK substeps, where several RHS evaluations are to be done
-            ! at the same time level but with different input data. Hence, the check below is NOT sufficient in those
-            ! cases.
-            ! if (abs(time-Insect%time) >= 1.0e-13_rk) then
-            !     call Update_Insect(time, Insect)
-            ! endif
-
-            ! 2026-06-15 : JB Disabled insect mask deleting itself, as at the start of create_mask_tree the whole mask is always wiped
-            !              Obviously, for static grids and masks (channel?) this is not needed and could be optimized later on
-
             call get_insect_id(i_geom, insect_id)  ! retrieve the id of the insect
 
             select case(stage)
@@ -103,7 +77,7 @@ subroutine create_mask_3D_nspp( time, x0, dx, Bs, g, mask, stage )
                 ! insect body: note non-tethered-flight is a problem
                 if (Insects(insect_id)%body_moves == "no") then
                     call draw_insect_body( time, x0-dble(g)*dx, dx, mask(:,:,:,1), &
-                    mask(:,:,:,5), mask(:,:,:,2:4), Insects(insect_id), delete=.false.)
+                    mask(:,:,:,5), mask(:,:,:,2:4), Insects(insect_id))
                 endif
 
 
@@ -111,16 +85,16 @@ subroutine create_mask_3D_nspp( time, x0, dx, Bs, g, mask, stage )
                 if (Insects(insect_id)%body_moves == "no") then
                     ! wings
                     call draw_insect_wings( time, x0-dble(g)*dx, dx, mask(:,:,:,1), &
-                    mask(:,:,:,5), mask(:,:,:,2:4), Insects(insect_id), delete=.false.)
+                    mask(:,:,:,5), mask(:,:,:,2:4), Insects(insect_id))
                 else
                     ! draw entire insect. Note: insect module is ghost-nodes aware, but requires origin shift.
-                    call Draw_Insect( time, Insects(insect_id), x0-dble(g)*dx, dx, mask(:,:,:,1), mask(:,:,:,5), mask(:,:,:,2:4), delete=.false. )
+                    call Draw_Insect( time, Insects(insect_id), x0-dble(g)*dx, dx, mask(:,:,:,1), mask(:,:,:,5), mask(:,:,:,2:4))
                 endif
 
             case ("all-parts")
                 ! wings and body
                 ! draw entire insect. Note: insect module is ghost-nodes aware, but requires origin shift.
-                call Draw_Insect( time, Insects(insect_id), x0-dble(g)*dx, dx, mask(:,:,:,1), mask(:,:,:,5), mask(:,:,:,2:4), delete=.false. )
+                call Draw_Insect( time, Insects(insect_id), x0-dble(g)*dx, dx, mask(:,:,:,1), mask(:,:,:,5), mask(:,:,:,2:4))
 
             case ("init_stage")
                 ! do nothing

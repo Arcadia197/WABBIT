@@ -304,7 +304,7 @@ contains
         call MPI_ALLREDUCE (a_loc,mpimin,1, MPI_DOUBLE_PRECISION,MPI_MIN,MPI_COMM_WORLD,mpicode)
     end function
 
-    real (kind=rk) function interp2_nonper (x_target, y_target, field2, axis, a, b)
+    real (kind=rk) function interp2_nonper (x_target, y_target, field2, axis)
         !  LINEAR Interpolation in a field. The field is of automatic size, indices starting with 0 both. The domain is
         !  defined by x1_box,y1_box and x2_box,y2_box. The target coordinates should lie within that box.
         !  NOTE: attention on the upper point of the box. In the rest of the code, which is periodic, the grid is 0:nx-1
@@ -314,8 +314,11 @@ contains
         integer :: i,j
         real (kind=rk) :: x,y,x_1,y_1,x_2,y_2,dx, dy, R1,R2
         real (kind=rk), intent (in) :: field2(0:,0:), x_target, y_target, axis(1:4)
-        integer, intent (in) :: a,b
+        integer(kind=ik) :: a,b
         real(kind=rk) :: x1_box, y1_box, x2_box, y2_box
+
+        a = size(field2, 1)
+        b = size(field2, 2)
 
         x1_box = axis(1)
         x2_box = axis(2)
@@ -323,8 +326,8 @@ contains
         y2_box = axis(4)
 
 
-        dx = (x2_box-x1_box) / dble(a-1)
-        dy = (y2_box-y1_box) / dble(b-1)
+        dx = (x2_box-x1_box) / real(a-1, kind=rk)
+        dy = (y2_box-y1_box) / real(b-1, kind=rk)
 
 
         if ( (x_target > x2_box).or.(x_target < x1_box).or.(y_target > y2_box).or.(y_target < y1_box) ) then
@@ -336,10 +339,10 @@ contains
         i = int((x_target-x1_box)/dx)
         j = int((y_target-y1_box)/dy)
 
-        x_1 = dble(i)*dx + x1_box
-        y_1 = dble(j)*dy + y1_box
-        x_2 = dx*dble(i+1) + x1_box
-        y_2 = dy*dble(j+1) + y1_box
+        x_1 = real(i, kind=rk)*dx + x1_box
+        y_1 = real(j, kind=rk)*dy + y1_box
+        x_2 = dx*real(i+1, kind=rk) + x1_box
+        y_2 = dy*real(j+1, kind=rk) + y1_box
         R1 = (x_2-x_target)*field2(i,j)/dx   + (x_target-x_1)*field2(i+1,j)/dx
         R2 = (x_2-x_target)*field2(i,j+1)/dx + (x_target-x_1)*field2(i+1,j+1)/dx
 

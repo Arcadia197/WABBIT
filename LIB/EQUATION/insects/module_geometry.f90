@@ -211,7 +211,8 @@ end subroutine draw_cylinder
 !---------------------------------------
 !> Draw a cylinder-rounded / cylinder with spherical end points using the exact SDF
 !!
-!! This is a pointwise implementation that loops over all grid points in the bounding box of the cylinder and applies the mask function based on the signed distance to the cylinder.
+!! This is a pointwise implementation that loops over all grid points in the bounding box of the 
+!! cylinder and applies the mask function based on the signed distance to the cylinder.
 !!
 !! Inputs:
 !! - `x0`, `dx`, `g` origin and spacing, ghost point size of the block
@@ -222,7 +223,8 @@ end subroutine draw_cylinder
 !!
 !! Outputs:
 !! - `mask`, `color` updated with the geometry
-subroutine draw_cylinder_rounded(mask, color, x0, dx, g, endpoint_1, endpoint_2, radius, color_set, smoothing_type_int, smoothing_width, smoothing_safety, bounding_box, x0_indices )
+subroutine draw_cylinder_rounded(mask, color, x0, dx, g, endpoint_1, endpoint_2, radius, color_set, &
+    smoothing_type_int, smoothing_width, smoothing_safety, bounding_box, x0_indices )
     use module_globals
 
     implicit none

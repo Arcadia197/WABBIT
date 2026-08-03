@@ -2,7 +2,7 @@
 ! the old routine (<02/2019) created just the body mask but not its solid velocity field
 ! now the routine does create the full body mask, including the velocity field. It sets us
 ! only inside the body (hence the wings set u_wing + u_body)
-subroutine draw_insect_body( time, xx0, ddx, mask, mask_color, us, Insect, delete)
+subroutine draw_insect_body( time, xx0, ddx, mask, mask_color, us, Insect)
     implicit none
 
     real(kind=rk), intent(in)    :: time
@@ -11,27 +11,9 @@ subroutine draw_insect_body( time, xx0, ddx, mask, mask_color, us, Insect, delet
     real(kind=rk), intent(inout) :: mask(0:,0:,0:)
     real(kind=rk), intent(inout) :: us(0:,0:,0:,1:)
     real(kind=rk), intent(inout) :: mask_color(0:,0:,0:)
-    logical, intent(in)           :: delete
 
     integer                       :: ix, iy, iz
     real(kind=rk), dimension(1:3) :: x_glob, x_body, v_tmp
-
-    ! 28/01/2019: Thomas. Discovered that this was done block based, i.e. the smoothing layer
-    ! had different thickness, if some blocks happened to be at different levels (and still carry
-    ! a part of the smoothing layer.) I don't know if that made sense, because the layer shrinks/expands then
-    ! and because it might be discontinous. Both options are included now, default is "as before"
-    ! Insect%smoothing_thickness=="local"  : smoothing_layer = c_sm * 2**-J * L/(BS-1)
-    ! Insect%smoothing_thickness=="global" : smoothing_layer = c_sm * 2**-Jmax * L/(BS-1)
-    ! NOTE: for FLUSI, this has no impact! Here, the grid is constant and equidistant.
-    if (Insect%smoothing_thickness=="local" .or. .not. grid_time_dependent) then
-        Insect%smooth = Insect%C_smooth*maxval(ddx)
-        if (Insect%smoothing_type == "hester") then
-            Insect%smooth = Insect%epsilon_hester
-            Insect%safety = max(5.0_rk*Insect%epsilon_hester, 2*maxval(ddx))
-        else
-            Insect%safety = 3.5_rk*Insect%smooth
-        end if
-    endif
 
     if (size(mask) /= size(mask_color) .or. size(us,4) /= 3) then
         write(*,*) "mask:", shape(mask), "mask_color:", shape(mask_color), "us:", shape(us)
@@ -41,29 +23,6 @@ subroutine draw_insect_body( time, xx0, ddx, mask, mask_color, us, Insect, delet
     if ((dabs(Insect%time-time)>1.0d-10).and.root) then
         write(*,'("error! time=",es15.8," but Insect%time=",es15.8)') time, Insect%time
         write(*,'("Did you call Update_Insect before draw_insect_body?")')
-    endif
-
-
-    if (delete) then
-        if (grid_time_dependent) then
-            ! The grid is time-dependent. In this case, the separation between
-            ! time-dependent (wings, moving body) and time-independent (fixed body)
-            ! is done elsewhere, so deleting means delete entire block
-            mask = 0.00_rk
-            us(:,:,:,1) = 0.00_rk
-            us(:,:,:,2) = 0.00_rk
-            us(:,:,:,3) = 0.00_rk
-            mask_color = 0
-        else
-            ! for the fixed-grid codes, delete only the body.
-            where (mask_color==Insect%color_body)
-                mask = 0.00_rk
-                us(:,:,:,1) = 0.00_rk
-                us(:,:,:,2) = 0.00_rk
-                us(:,:,:,3) = 0.00_rk
-                mask_color = 0
-            end where
-        endif
     endif
 
     !---------------------------------------------------------------------------
@@ -253,7 +212,7 @@ subroutine draw_body_bumblebee( xx0, ddx, mask, mask_color, us, Insect)
 
                     ! smoothing
                     if (( R < R0 + Insect%safety ).and.(R0>0.0_rk)) then
-                        R_tmp = step(R, R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int)
+                        R_tmp = step(R, R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int)
                         mask(ix,iy,iz)= max( R_tmp , mask(ix,iy,iz) )
                         mask_color(ix,iy,iz) = color_body
                     endif
@@ -298,7 +257,7 @@ subroutine draw_body_bumblebee( xx0, ddx, mask, mask_color, us, Insect)
                             if ( ((x_head(1)-xx_head)/dx_head)**2 <= 1._rk) then
                                 R0 = dz_head*dsqrt(1._rk- ((x_head(1)-xx_head)/dx_head)**2 )
                                 if ( R < R0 + Insect%safety ) then
-                                    mask(ix,iy,iz)= max(step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                                    mask(ix,iy,iz)= max(step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                                     mask_color(ix,iy,iz) = color_body
                                 endif
                             endif
@@ -344,44 +303,44 @@ subroutine draw_body_bumblebee( xx0, ddx, mask, mask_color, us, Insect)
         xa = matmul( transpose(M_g2b), (/xl1(j)  ,yl1(j)  ,zl1(j)/)  ) + Insect%xc_body_g
         xb = matmul( transpose(M_g2b), (/xl1(j+1),yl1(j+1),zl1(j+1)/)) + Insect%xc_body_g
         ! note input to draw_cylinder_new is in global coordinates
-        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl1(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl1(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
         xa = matmul( transpose(M_g2b), (/xl2(j)  ,yl2(j)  ,zl2(j)/)  ) + Insect%xc_body_g
         xb = matmul( transpose(M_g2b), (/xl2(j+1),yl2(j+1),zl2(j+1)/)) + Insect%xc_body_g
-        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl2(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl2(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
         xa = matmul( transpose(M_g2b), (/xl3(j)  ,yl3(j)  ,zl3(j)/)  ) + Insect%xc_body_g
         xb = matmul( transpose(M_g2b), (/xl3(j+1),yl3(j+1),zl3(j+1)/)) + Insect%xc_body_g
-        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl3(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl3(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
         ! right side of body (flip the sign of y)
         xa = matmul( transpose(M_g2b), (/xl1(j)  ,-yl1(j)  ,zl1(j)/)  ) + Insect%xc_body_g
         xb = matmul( transpose(M_g2b), (/xl1(j+1),-yl1(j+1),zl1(j+1)/)) + Insect%xc_body_g
-        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl1(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl1(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
         xa = matmul( transpose(M_g2b), (/xl2(j)  ,-yl2(j)  ,zl2(j)/)  ) + Insect%xc_body_g
         xb = matmul( transpose(M_g2b), (/xl2(j+1),-yl2(j+1),zl2(j+1)/)) + Insect%xc_body_g
-        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl2(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl2(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
         xa = matmul( transpose(M_g2b), (/xl3(j)  ,-yl3(j)  ,zl3(j)/)  ) + Insect%xc_body_g
         xb = matmul( transpose(M_g2b), (/xl3(j+1),-yl3(j+1),zl3(j+1)/)) + Insect%xc_body_g
-        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl3(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+        call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rl3(j), color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
     enddo
 
     ! antenna (left)
     xa = matmul( transpose(M_g2b), (/xan(1),yan(1),zan(1)/) ) + Insect%xc_body_g
     xb = matmul( transpose(M_g2b), (/xan(2),yan(2),zan(2)/) ) + Insect%xc_body_g
-    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, ran, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, ran, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
     ! antenna (right)
     xa = matmul( transpose(M_g2b), (/xan(1),-yan(1),zan(1)/) ) + Insect%xc_body_g
     xb = matmul( transpose(M_g2b), (/xan(2),-yan(2),zan(2)/) ) + Insect%xc_body_g
-    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, ran, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, ran, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
     ! proboscis (to drink)
     xa = matmul( transpose(M_g2b), (/xf(1),yf(1),zf(1)/) ) + Insect%xc_body_g
     xb = matmul( transpose(M_g2b), (/xf(2),yf(2),zf(2)/) ) + Insect%xc_body_g
-    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rf, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, xa, xb, rf, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
 end subroutine draw_body_bumblebee
 
@@ -484,7 +443,7 @@ subroutine draw_body_emundus( xx0, ddx, mask, mask_color, us, Insect)
 
                     ! smoothing
                     if (( R < R0 + Insect%safety ).and.(R0>0.0_rk)) then
-                        R_tmp = step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int)
+                        R_tmp = step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int)
                         mask(ix,iy,iz)= max( R_tmp , mask(ix,iy,iz) )
                         mask_color(ix,iy,iz) = color_body
                     endif
@@ -529,7 +488,7 @@ subroutine draw_body_emundus( xx0, ddx, mask, mask_color, us, Insect)
                             if ( ((x_head(1)-xx_head)/dx_head)**2 <= 1._rk) then
                                 R0 = dz_head*dsqrt(1._rk- ((x_head(1)-xx_head)/dx_head)**2 )
                                 if ( R < R0 + Insect%safety ) then
-                                    mask(ix,iy,iz)= max(step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                                    mask(ix,iy,iz)= max(step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                                     mask_color(ix,iy,iz) = color_body
                                 endif
                             endif
@@ -625,7 +584,7 @@ subroutine draw_body_paratuposa_simple( xx0, ddx, mask, mask_color, us, Insect)
 
                     ! smoothing
                     if (( R < R0 + Insect%safety ).and.(R0>0.0_rk)) then
-                        R_tmp = step(R, R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int)
+                        R_tmp = step(R, R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int)
                         mask(ix,iy,iz)= max( R_tmp , mask(ix,iy,iz) )
                         mask_color(ix,iy,iz) = color_body
                     endif
@@ -737,7 +696,7 @@ subroutine draw_body_drosophila_maeda( xx0, ddx, mask, mask_color, us, Insect)
 
                     ! smoothing
                     if (( R < R0 + Insect%safety ).and.(R0>0.0_rk)) then
-                        R_tmp = step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int)
+                        R_tmp = step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int)
                         mask(ix,iy,iz)= max( R_tmp , mask(ix,iy,iz) )
                         mask_color(ix,iy,iz) = color_body
                     endif
@@ -786,7 +745,7 @@ subroutine draw_body_drosophila_maeda( xx0, ddx, mask, mask_color, us, Insect)
                             if ( ((x_head(1)-xx_head)/dx_head)**2 <= 1._rk) then
                                 R0 = dz_head*dsqrt(1._rk- ((x_head(1)-xx_head)/dx_head)**2 )
                                 if ( R < R0 + Insect%safety ) then
-                                    mask(ix,iy,iz)= max(step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                                    mask(ix,iy,iz)= max(step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                                     mask_color(ix,iy,iz) = color_body
                                 endif
                             endif
@@ -863,7 +822,7 @@ subroutine draw_body_jerry( xx0, ddx, mask, mask_color, us, Insect)
                                 R0 = dsqrt( Insect%b_body**2 *(1._rk- (x_body(1)/a_body)**2 ) )
 
                                 if ( R < R0 + Insect%safety ) then
-                                    mask(ix,iy,iz)= max(step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                                    mask(ix,iy,iz)= max(step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                                     mask_color(ix,iy,iz) = color_body
                                 endif
                             endif
@@ -878,13 +837,13 @@ subroutine draw_body_jerry( xx0, ddx, mask, mask_color, us, Insect)
     ! Jerry's head and eyes are spheres
     !-----------------------------------------------------------------------------
     x_head = Insect%xc_body_g + matmul(transpose(M_g2b),Insect%x_head)
-    call draw_sphere(mask, mask_color, xx0, ddx, g, x_head,Insect%R_head, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_sphere(mask, mask_color, xx0, ddx, g, x_head,Insect%R_head, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
     x_eye = Insect%xc_body_g + matmul(transpose(M_g2b),Insect%x_eye_l)
-    call draw_sphere(mask, mask_color, xx0, ddx, g, x_eye,Insect%R_eye, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_sphere(mask, mask_color, xx0, ddx, g, x_eye,Insect%R_eye, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
     x_eye = Insect%xc_body_g + matmul(transpose(M_g2b),Insect%x_eye_r)
-    call draw_sphere(mask, mask_color, xx0, ddx, g, x_eye,Insect%R_eye, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_sphere(mask, mask_color, xx0, ddx, g, x_eye,Insect%R_eye, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 end subroutine draw_body_jerry
 
 
@@ -908,7 +867,7 @@ subroutine draw_body_sphere( xx0, ddx, mask, mask_color, us, Insect)
     M_g2b     = Insect%M_g2b
 
     x_head = Insect%xc_body_g
-    call draw_sphere(mask, mask_color, xx0, ddx, g, x_head,Insect%L_body/2.0_rk, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_sphere(mask, mask_color, xx0, ddx, g, x_head,Insect%L_body/2.0_rk, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
 end subroutine draw_body_sphere
 
@@ -966,7 +925,7 @@ subroutine draw_body_platicle( xx0, ddx, mask, mask_color, us, Insect)
                                             dabs(x_body(1))-L/2.0_rk &
                                         /) )
 
-                            mask(ix,iy,iz) = max(step(R,0.0_rk, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                            mask(ix,iy,iz) = max(step(R,0.0_rk, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                             mask_color(ix,iy,iz) = color_body
                         endif
                     endif
@@ -1021,7 +980,7 @@ subroutine draw_body_coin( xx0, ddx, mask, mask_color, us, Insect)
                             R = maxval( (/ dabs(x_body(3)) - Insect%WingThickness/2.0_rk,&
                             dsqrt(x_body(2)**2 + x_body(1)**2)-0.5_rk &
                             /) )
-                            mask(ix,iy,iz) = max(step(R,0.0_rk, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                            mask(ix,iy,iz) = max(step(R,0.0_rk, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                             mask_color(ix,iy,iz) = color_body
                         endif
                     endif
@@ -1075,7 +1034,7 @@ subroutine draw_suzuki_thin_rod( xx0, ddx, mask, mask_color, us, Insect)
                 if ( dabs(x_body(1))<=0.5_rk+Insect%safety) then
                     R = x_body(2)**2 + x_body(3)**2
                     if ( R < R0) then
-                        a = step(dsqrt(R),R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int)
+                        a = step(dsqrt(R),R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int)
                         if (mask(ix,iy,iz)<=a) then
                             mask(ix,iy,iz) = a
                             mask_color(ix,iy,iz) = color_body
@@ -1148,7 +1107,7 @@ subroutine draw_body_hawkmoth( xx0, ddx, mask, mask_color, us, Insect)
                                 R0 = dsqrt( Insect%b_body**2 *(1._rk- (x_body(1)/a_body)**2 ) )
 
                                 if ( R < R0 + Insect%safety ) then
-                                    mask(ix,iy,iz)= max(step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                                    mask(ix,iy,iz)= max(step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                                     mask_color(ix,iy,iz) = color_body
                                 endif
                             endif
@@ -1163,7 +1122,7 @@ subroutine draw_body_hawkmoth( xx0, ddx, mask, mask_color, us, Insect)
     ! Head is a sphere, we add antennae, which are cylinders
     !-----------------------------------------------------------------------------
     x_head = Insect%xc_body_g + matmul(transpose(M_g2b),Insect%x_head)
-    call draw_sphere(mask, mask_color, xx0, ddx, g, x_head,Insect%R_head, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_sphere(mask, mask_color, xx0, ddx, g, x_head,Insect%R_head, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
     ! these guys are in the body system:
     x_eye_r = Insect%x_head+dsin(45._rk*pi/180.0_rk)*Insect%R_head*0.8_rk*(/1._rk,+1._rk,1._rk/)
@@ -1172,7 +1131,7 @@ subroutine draw_body_hawkmoth( xx0, ddx, mask, mask_color, us, Insect)
     x1 = Insect%xc_body_g + matmul(transpose(M_g2b),x_eye_l)
     x2 = Insect%xc_body_g + matmul(transpose(M_g2b),x_eye_r)
     ! draw the cylinder (with spheres at the ends)
-    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, x1, x2, 0.015_rk*1.3_rk, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, x1, x2, 0.015_rk*1.3_rk, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 
 
     ! these guys are in the body system:
@@ -1182,7 +1141,7 @@ subroutine draw_body_hawkmoth( xx0, ddx, mask, mask_color, us, Insect)
     x1 = Insect%xc_body_g + matmul(transpose(M_g2b),x_eye_l)
     x2 = Insect%xc_body_g + matmul(transpose(M_g2b),x_eye_r)
     ! draw the cylinder (with spheres at the ends)
-    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, x1, x2, 0.015_rk*1.3_rk, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_cylinder_rounded(mask, mask_color, xx0, ddx, g, x1, x2, 0.015_rk*1.3_rk, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
 end subroutine draw_body_hawkmoth
 
 
@@ -1224,7 +1183,7 @@ subroutine draw_body_mosquito_iams( xx0, ddx, mask, mask_color, us, Insect)
     ! the head is a simple sphere with radius 0.1154
     R0 = 0.1154_rk
     x1 = x0_head + Insect%xc_body_g
-    call draw_sphere(mask, mask_color, xx0, ddx, g, x1,R0, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
+    call draw_sphere(mask, mask_color, xx0, ddx, g, x1,R0, color_set=int(color_body, kind=ik), smoothing_type_int=Insect%smoothing_type_int, smoothing_width=Insect%L_smooth, smoothing_safety=Insect%safety, x0_indices=(/1,1,1/))
     ! call drawsphere( x1, R0, xx0, ddx, mask, mask_color, us,Insect,color_body )
 
     !-----------------------------------------------------------------------------
@@ -1259,7 +1218,7 @@ subroutine draw_body_mosquito_iams( xx0, ddx, mask, mask_color, us, Insect)
                             if ( x_body(3)/a <= 1._rk) then
                                 R0 = b * dsqrt( 1._rk - (x_body(3)/a)**2 )
                                 if ( R < R0 + Insect%safety ) then
-                                    mask(ix,iy,iz)= max(step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                                    mask(ix,iy,iz)= max(step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                                     mask_color(ix,iy,iz) = color_body
                                 endif
                             endif
@@ -1306,7 +1265,7 @@ subroutine draw_body_mosquito_iams( xx0, ddx, mask, mask_color, us, Insect)
                             if ( x_body(1)/a <= 1._rk) then
                                 R0 = b * dsqrt( 1._rk - (x_body(1)/a)**2 )
                                 if ( R < R0 + Insect%safety ) then
-                                    mask(ix,iy,iz)= max(step(R,R0, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                                    mask(ix,iy,iz)= max(step(R,R0, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
                                     mask_color(ix,iy,iz) = color_body
                                 endif
                             endif
@@ -1352,7 +1311,7 @@ subroutine draw_body_cone( xx0, ddx, mask, mask_color, us, Insect)
     ! a is the sidelength of the pyramid
     a = Insect%b_body
     ! alpha is HALF the opening angle
-    alpha = Insect%eta0
+    alpha = Insect%eta_stroke
     ! heigh is defined by alpha and a
     H = a * dcos(alpha)
     ! we draw a shell here, and this is its thickness
@@ -1389,9 +1348,9 @@ subroutine draw_body_cone( xx0, ddx, mask, mask_color, us, Insect)
                             R0 = max( -a*sin(alpha)*x_body(3) + (2.0_rk/3._rk)*H*a*sin(alpha) , 0.0_rk )
                             ! define the mask. note w shifted the system to the center of gravity
                             ! therefore -H/3 <= z <= 2H/3
-                            mask(ix,iy,iz)= max(step(dabs(R-R0),0.5_rk*thick, Insect%smooth, Insect%safety, Insect%smoothing_type_int)&
-                            *step(x_body(3),H*2.0_rk/3._rk, Insect%smooth, Insect%safety, Insect%smoothing_type_int)&
-                            *step(-x_body(3),H/3._rk, Insect%smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
+                            mask(ix,iy,iz)= max(step(dabs(R-R0),0.5_rk*thick, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int)&
+                            *step(x_body(3),H*2.0_rk/3._rk, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int)&
+                            *step(-x_body(3),H/3._rk, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int),mask(ix,iy,iz))
 
                             mask_color(ix,iy,iz) = color_body
                         endif
@@ -1566,7 +1525,7 @@ subroutine draw_body_superSTL(x0, dx, mask, mask_color, us, Insect)
                 ! revised version, 11/2022:
                 ! now we compute a thin layer around the surface which is smoothed both towards the inside and
                 ! outside of the body
-                tmp = step( abs(signed_distance+0.5_rk*shell_thickness), 0.5_rk*shell_thickness, Insect%smooth, Insect%safety, Insect%smoothing_type_int )
+                tmp = step( abs(signed_distance+0.5_rk*shell_thickness), 0.5_rk*shell_thickness, Insect%L_smooth, Insect%safety, Insect%smoothing_type_int )
 
                 if (mask(ix,iy,iz) <= tmp) then
                     mask(ix,iy,iz) = tmp

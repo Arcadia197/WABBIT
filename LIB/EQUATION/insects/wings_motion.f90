@@ -10,30 +10,11 @@ subroutine FlappingMotionWrap ( time, Insect, wingID )
   type(diptera) :: Insect
   integer(kind=2), intent(in) :: wingID
 
-  select case ( wingID )
-  case (1) !("left")
-      call FlappingMotion ( time, Insect, Insect%FlappingMotion_left, &
-      Insect%phi_l, Insect%alpha_l, Insect%theta_l, Insect%phi_dt_l,&
-      Insect%alpha_dt_l, Insect%theta_dt_l, Insect%kine_wing_l, wingID )
 
-  case (2) !("right")
-      call FlappingMotion ( time, Insect, Insect%FlappingMotion_right, &
-      Insect%phi_r, Insect%alpha_r, Insect%theta_r, Insect%phi_dt_r, &
-      Insect%alpha_dt_r, Insect%theta_dt_r, Insect%kine_wing_r, wingID )
-
-  case (3) !("left2")
-      call FlappingMotion ( time, Insect, Insect%FlappingMotion_left2, &
-      Insect%phi_l2, Insect%alpha_l2, Insect%theta_l2, Insect%phi_dt_l2,&
-      Insect%alpha_dt_l2, Insect%theta_dt_l2, Insect%kine_wing_l2, wingID )
-
-  case (4) !("right2")
-      call FlappingMotion ( time, Insect, Insect%FlappingMotion_right2, &
-      Insect%phi_r2, Insect%alpha_r2, Insect%theta_r2, Insect%phi_dt_r2, &
-      Insect%alpha_dt_r2, Insect%theta_dt_r2, Insect%kine_wing_r2, wingID )
-
-  case default
-    call abort(77744, "not a valid wing identifier")
-  end select
+  call FlappingMotion ( time, Insect, Insect%Wings(wingID)%FlappingMotion, &
+    Insect%Wings(wingID)%phi, Insect%Wings(wingID)%alpha, Insect%Wings(wingID)%theta, &
+    Insect%Wings(wingID)%phi_dt, Insect%Wings(wingID)%alpha_dt, Insect%Wings(wingID)%theta_dt, &
+    wingID )
 
 end subroutine FlappingMotionWrap
 
@@ -51,21 +32,19 @@ end subroutine FlappingMotionWrap
 !       phi_dt: flapping time derivative
 !       alpha_dt: feathering time derivative
 !       theta_dt: deviatory time derivative
-!       kine: a Fourier series object, as described in insects.f90
 ! The actual motion depends on the choices in the parameter file, namely
 ! Insect%WingMotion, and sub-parameters that may further precise a given motion
 ! protocoll. Note we allow all four wings to follow a different motion, but they all
 ! call this routine here.
 !-------------------------------------------------------------------------------
 subroutine FlappingMotion(time, Insect, protocoll, phi, alpha, theta, phi_dt, &
-           alpha_dt, theta_dt, kine, wingID)
+           alpha_dt, theta_dt, wingID)
   implicit none
 
   real(kind=rk), intent(in) :: time
   type(diptera), intent(inout) :: Insect
   real(kind=rk), intent(out) :: phi, alpha, theta, phi_dt, alpha_dt, theta_dt
   character (len=*), intent(in) :: protocoll
-  type(wingkinematics), intent(inout) :: kine
   ! wingID is used for kineloader (to figure out which columns to use from the data array)
   integer(kind=2), intent(in) :: wingID
 
@@ -89,38 +68,34 @@ subroutine FlappingMotion(time, Insect, protocoll, phi, alpha, theta, phi_dt, &
     !---------------------------------------------------------------------------
     ! Load kinematics for one stroke from file. This can be applied for example
     ! in hovering. if the wing motion varies appreciably between strokes,
-    ! the kinematic loader is the method of choice. The file is specified
+    ! the kinematics_loader is the method of choice. The file is specified
     ! in the params file and stored in Insect%infile. An example file
     ! (kinematics_fourier_example.ini) is in the git-repository
     !---------------------------------------------------------------------------
-    if (index( kine%infile,".ini")==0) then
-      call abort(2030,"you're trying to load an old kinematics file,please convert it to &
-      &a new *.ini file (see src/insects/kinematics_example.ini&
-      & the insects-tools repository can help you do that!")
-    endif
 
     !---------------------------------------------------------------------------
     ! this block is excecuted only once per simulation, on first call of this routine
     !---------------------------------------------------------------------------
-    if (.not.kine%initialized) then
+    if (.not. Insect%Wings(wingID)%initialized) then
         if (root) then
-          write(*,'(80("<"))')
+          write(*,'(80("-"))')
           write(*,*) "Initializing wing kinematics!"
-          write(*,*) "*.ini file is: "//trim(adjustl(kine%infile))
-          write(*,'(80("<"))')
+          write(*,*) "wingID", wingID
+          write(*,*) "*.ini file is: "//trim(adjustl(Insect%Wings(wingID)%infile))
+          write(*,'(80("-"))')
         endif
       ! parse ini file
-      call read_ini_file_mpi(kinefile, kine%infile, .true.)
+      call read_ini_file_mpi(kinefile, Insect%Wings(wingID)%infile, .true.)
 
       ! how to interpret numbers: Fourier or Hermite?
-      call read_param_mpi(kinefile,"kinematics","type",kine%infile_type,"none")
+      call read_param_mpi(kinefile,"kinematics","type",Insect%Wings(wingID)%infile_type,"none")
       ! what units are given, degree or radiant?
-      call read_param_mpi(kinefile,"kinematics","units",kine%infile_units,"degree")
+      call read_param_mpi(kinefile,"kinematics","units",Insect%Wings(wingID)%infile_units,"degree")
       ! what convention/definition does the data follow?
-      call read_param_mpi(kinefile,"kinematics","convention",kine%infile_convention,"flusi")
+      call read_param_mpi(kinefile,"kinematics","convention",Insect%Wings(wingID)%infile_convention,"flusi")
 
       ! inform about your interpretation
-      select case (kine%infile_type)
+      select case (Insect%Wings(wingID)%infile_type)
       case ("Fourier", "fourier", "FOURIER")
         if (root) write(*,*) "The input file is interpreted as FOURIER coefficients"
 
@@ -143,32 +118,40 @@ subroutine FlappingMotion(time, Insect, protocoll, phi, alpha, theta, phi_dt, &
       ! If the type is _HERMITE_, we read function values (ai) and derivatives (bi), 
       ! assuming implicitly an equidistant time vector [0, 1), thus excluding t=1.0
       !------------------------------------------------------------------------------------
+      ! -- phi
+      call read_param_mpi(kinefile,"kinematics","nfft_phi",Insect%Wings(wingID)%nfft_phi,0)
       
-      call read_param_mpi(kinefile,"kinematics","nfft_phi",kine%nfft_phi,0)
-      if (.not. allocated(kine%ai_phi)) allocate(kine%ai_phi(max(1,kine%nfft_phi)))
-      if (.not. allocated(kine%bi_phi)) allocate(kine%bi_phi(max(1,kine%nfft_phi)))
-      call read_param_mpi(kinefile,"kinematics","a0_phi",kine%a0_phi,0.0_rk)
-      call read_param_mpi(kinefile,"kinematics","ai_phi",kine%ai_phi(1:kine%nfft_phi))
-      call read_param_mpi(kinefile,"kinematics","bi_phi",kine%bi_phi(1:kine%nfft_phi))
+      if (.not. allocated(Insect%Wings(wingID)%ai_phi)) allocate(Insect%Wings(wingID)%ai_phi(max(1,Insect%Wings(wingID)%nfft_phi)))
+      if (.not. allocated(Insect%Wings(wingID)%bi_phi)) allocate(Insect%Wings(wingID)%bi_phi(max(1,Insect%Wings(wingID)%nfft_phi)))
       
-      call read_param_mpi(kinefile,"kinematics","nfft_alpha",kine%nfft_alpha,0)
-      if (.not. allocated(kine%ai_alpha)) allocate(kine%ai_alpha(max(1,kine%nfft_alpha)))
-      if (.not. allocated(kine%bi_alpha)) allocate(kine%bi_alpha(max(1,kine%nfft_alpha)))
-      call read_param_mpi(kinefile,"kinematics","a0_alpha",kine%a0_alpha,0.0_rk)
-      call read_param_mpi(kinefile,"kinematics","ai_alpha",kine%ai_alpha(1:kine%nfft_alpha))
-      call read_param_mpi(kinefile,"kinematics","bi_alpha",kine%bi_alpha(1:kine%nfft_alpha))
+      call read_param_mpi(kinefile,"kinematics","a0_phi",Insect%Wings(wingID)%a0_phi,0.0_rk)
+      call read_param_mpi(kinefile,"kinematics","ai_phi",Insect%Wings(wingID)%ai_phi(1:Insect%Wings(wingID)%nfft_phi))
+      call read_param_mpi(kinefile,"kinematics","bi_phi",Insect%Wings(wingID)%bi_phi(1:Insect%Wings(wingID)%nfft_phi))
       
-      call read_param_mpi(kinefile,"kinematics","nfft_theta",kine%nfft_theta,0)
-      if (.not. allocated(kine%ai_theta)) allocate(kine%ai_theta(max(1,kine%nfft_theta)))
-      if (.not. allocated(kine%bi_theta)) allocate(kine%bi_theta(max(1,kine%nfft_theta)))
-      call read_param_mpi(kinefile,"kinematics","a0_theta",kine%a0_theta,0.0_rk)
-      call read_param_mpi(kinefile,"kinematics","ai_theta",kine%ai_theta(1:kine%nfft_theta))
-      call read_param_mpi(kinefile,"kinematics","bi_theta",kine%bi_theta(1:kine%nfft_theta))
+      ! -- alpha
+      call read_param_mpi(kinefile,"kinematics","nfft_alpha",Insect%Wings(wingID)%nfft_alpha,0)
+      
+      if (.not. allocated(Insect%Wings(wingID)%ai_alpha)) allocate(Insect%Wings(wingID)%ai_alpha(max(1,Insect%Wings(wingID)%nfft_alpha)))
+      if (.not. allocated(Insect%Wings(wingID)%bi_alpha)) allocate(Insect%Wings(wingID)%bi_alpha(max(1,Insect%Wings(wingID)%nfft_alpha)))
+      
+      call read_param_mpi(kinefile,"kinematics","a0_alpha",Insect%Wings(wingID)%a0_alpha,0.0_rk)
+      call read_param_mpi(kinefile,"kinematics","ai_alpha",Insect%Wings(wingID)%ai_alpha(1:Insect%Wings(wingID)%nfft_alpha))
+      call read_param_mpi(kinefile,"kinematics","bi_alpha",Insect%Wings(wingID)%bi_alpha(1:Insect%Wings(wingID)%nfft_alpha))
+      
+      ! -- theta
+      call read_param_mpi(kinefile,"kinematics","nfft_theta",Insect%Wings(wingID)%nfft_theta,0)
+      
+      if (.not. allocated(Insect%Wings(wingID)%ai_theta)) allocate(Insect%Wings(wingID)%ai_theta(max(1,Insect%Wings(wingID)%nfft_theta)))
+      if (.not. allocated(Insect%Wings(wingID)%bi_theta)) allocate(Insect%Wings(wingID)%bi_theta(max(1,Insect%Wings(wingID)%nfft_theta)))
+      
+      call read_param_mpi(kinefile,"kinematics","a0_theta",Insect%Wings(wingID)%a0_theta,0.0_rk)
+      call read_param_mpi(kinefile,"kinematics","ai_theta",Insect%Wings(wingID)%ai_theta(1:Insect%Wings(wingID)%nfft_theta))
+      call read_param_mpi(kinefile,"kinematics","bi_theta",Insect%Wings(wingID)%bi_theta(1:Insect%Wings(wingID)%nfft_theta))
 
-      kine%initialized = .true.
+      Insect%Wings(wingID)%initialized = .true.
       call clean_ini_file_mpi( kinefile )
 
-      if (root) write(*,'(80(">"))')
+      if (root) write(*,*) " --- Kinematics initialization from file complete ---"
     endif
 
     !---------------------------------------------------------------------------
@@ -176,18 +159,18 @@ subroutine FlappingMotion(time, Insect, protocoll, phi, alpha, theta, phi_dt, &
     !---------------------------------------------------------------------------
     ! this block is executed every time. it is called a few times only per time step
     ! so don't worry about performance, we can use the string comparison
-    select case (kine%infile_type)
+    select case (Insect%Wings(wingID)%infile_type)
     case ("Fourier","fourier","FOURIER")
       ! evaluate fourier series
-      call fseries_eval(time,phi,phi_dt, kine%a0_phi, kine%ai_phi(1:kine%nfft_phi), kine%bi_phi(1:kine%nfft_phi))
-      call fseries_eval(time,alpha,alpha_dt, kine%a0_alpha, kine%ai_alpha(1:kine%nfft_alpha), kine%bi_alpha(1:kine%nfft_alpha))
-      call fseries_eval(time,theta,theta_dt, kine%a0_theta, kine%ai_theta(1:kine%nfft_theta), kine%bi_theta(1:kine%nfft_theta))
+      call fseries_eval(time,phi,phi_dt, Insect%Wings(wingID)%a0_phi, Insect%Wings(wingID)%ai_phi(1:Insect%Wings(wingID)%nfft_phi), Insect%Wings(wingID)%bi_phi(1:Insect%Wings(wingID)%nfft_phi))
+      call fseries_eval(time,alpha,alpha_dt, Insect%Wings(wingID)%a0_alpha, Insect%Wings(wingID)%ai_alpha(1:Insect%Wings(wingID)%nfft_alpha), Insect%Wings(wingID)%bi_alpha(1:Insect%Wings(wingID)%nfft_alpha))
+      call fseries_eval(time,theta,theta_dt, Insect%Wings(wingID)%a0_theta, Insect%Wings(wingID)%ai_theta(1:Insect%Wings(wingID)%nfft_theta), Insect%Wings(wingID)%bi_theta(1:Insect%Wings(wingID)%nfft_theta))
 
     case ("Hermite","hermite","HERMITE")
       ! evaluate hermite interpolation
-      call hermite_eval(time, phi, phi_dt    , kine%ai_phi(1:kine%nfft_phi), kine%bi_phi(1:kine%nfft_phi))
-      call hermite_eval(time, alpha, alpha_dt, kine%ai_alpha(1:kine%nfft_alpha), kine%bi_alpha(1:kine%nfft_alpha))
-      call hermite_eval(time, theta, theta_dt, kine%ai_theta(1:kine%nfft_theta), kine%bi_theta(1:kine%nfft_theta))
+      call hermite_eval(time, phi, phi_dt    , Insect%Wings(wingID)%ai_phi(1:Insect%Wings(wingID)%nfft_phi), Insect%Wings(wingID)%bi_phi(1:Insect%Wings(wingID)%nfft_phi))
+      call hermite_eval(time, alpha, alpha_dt, Insect%Wings(wingID)%ai_alpha(1:Insect%Wings(wingID)%nfft_alpha), Insect%Wings(wingID)%bi_alpha(1:Insect%Wings(wingID)%nfft_alpha))
+      call hermite_eval(time, theta, theta_dt, Insect%Wings(wingID)%ai_theta(1:Insect%Wings(wingID)%nfft_theta), Insect%Wings(wingID)%bi_theta(1:Insect%Wings(wingID)%nfft_theta))
 
     case default
       call abort(1717,"kinematics file does not appear to be valid, set type=fourier or type=hermite")
@@ -196,7 +179,7 @@ subroutine FlappingMotion(time, Insect, protocoll, phi, alpha, theta, phi_dt, &
     !---------------------------------------------------------------------------
     ! make sure the output is in the right units (it HAS to be radiants!)
     !---------------------------------------------------------------------------
-    select case (kine%infile_units)
+    select case (Insect%Wings(wingID)%infile_units)
     case ("degree","DEGREE","Degree","DEG","deg")
       ! the rest of the code gets radiants, so convert here
       phi    = deg2rad(phi)
@@ -214,7 +197,7 @@ subroutine FlappingMotion(time, Insect, protocoll, phi, alpha, theta, phi_dt, &
     !---------------------------------------------------------------------------
     ! make sure convention / definition of angles is respected
     !---------------------------------------------------------------------------
-    select case (kine%infile_convention)
+    select case (Insect%Wings(wingID)%infile_convention)
     case ("FLUSI","flusi","Flusi","FluSI")
       ! defintion as used in flusi. all angles are positive in the right hand rule
       ! that means especially that positive deviation puts wing downwards in a
@@ -354,41 +337,41 @@ case ("revolving-set3-degree")
     !
     ! fourier coefficients analyzed with matlab
     !---------------------------------------------------------------------------
-    if (.not.kine%initialized) then
-      kine%nfft_alpha = 10
-      kine%nfft_theta = 10
-      kine%nfft_phi   = 10
+    if (.not.Insect%Wings(wingID)%initialized) then
+      Insect%Wings(wingID)%nfft_alpha = 10
+      Insect%Wings(wingID)%nfft_theta = 10
+      Insect%Wings(wingID)%nfft_phi   = 10
 
       ! Allocate arrays
-      if (.not. allocated(kine%ai_phi)) allocate(kine%ai_phi(kine%nfft_phi))
-      if (.not. allocated(kine%bi_phi)) allocate(kine%bi_phi(kine%nfft_phi))
-      if (.not. allocated(kine%ai_alpha)) allocate(kine%ai_alpha(kine%nfft_alpha))
-      if (.not. allocated(kine%bi_alpha)) allocate(kine%bi_alpha(kine%nfft_alpha))
-      if (.not. allocated(kine%ai_theta)) allocate(kine%ai_theta(kine%nfft_theta))
-      if (.not. allocated(kine%bi_theta)) allocate(kine%bi_theta(kine%nfft_theta))
+      if (.not. allocated(Insect%Wings(wingID)%ai_phi)) allocate(Insect%Wings(wingID)%ai_phi(Insect%Wings(wingID)%nfft_phi))
+      if (.not. allocated(Insect%Wings(wingID)%bi_phi)) allocate(Insect%Wings(wingID)%bi_phi(Insect%Wings(wingID)%nfft_phi))
+      if (.not. allocated(Insect%Wings(wingID)%ai_alpha)) allocate(Insect%Wings(wingID)%ai_alpha(Insect%Wings(wingID)%nfft_alpha))
+      if (.not. allocated(Insect%Wings(wingID)%bi_alpha)) allocate(Insect%Wings(wingID)%bi_alpha(Insect%Wings(wingID)%nfft_alpha))
+      if (.not. allocated(Insect%Wings(wingID)%ai_theta)) allocate(Insect%Wings(wingID)%ai_theta(Insect%Wings(wingID)%nfft_theta))
+      if (.not. allocated(Insect%Wings(wingID)%bi_theta)) allocate(Insect%Wings(wingID)%bi_theta(Insect%Wings(wingID)%nfft_theta))
 
-      kine%a0_phi   =25.4649398
-      kine%a0_alpha =-0.3056968
-      kine%a0_theta =-17.8244658  ! - sign (Dmitry, 10 Nov 2013)
+      Insect%Wings(wingID)%a0_phi   =25.4649398
+      Insect%Wings(wingID)%a0_alpha =-0.3056968
+      Insect%Wings(wingID)%a0_theta =-17.8244658  ! - sign (Dmitry, 10 Nov 2013)
 
-      kine%ai_phi(1:kine%nfft_phi) = (/71.1061858,2.1685448,-0.1986978,0.6095268,-0.0311298,&
+      Insect%Wings(wingID)%ai_phi(1:Insect%Wings(wingID)%nfft_phi) = (/71.1061858,2.1685448,-0.1986978,0.6095268,-0.0311298,&
                                        -0.1255648,-0.0867778,0.0543518,0.0,0.0/)
-      kine%bi_phi(1:kine%nfft_phi) = (/5.4547058,-3.5461688,0.6260698,0.1573728,-0.0360498,-0.0205348,&
+      Insect%Wings(wingID)%bi_phi(1:Insect%Wings(wingID)%nfft_phi) = (/5.4547058,-3.5461688,0.6260698,0.1573728,-0.0360498,-0.0205348,&
                                       -0.0083818,-0.0076848,0.0,0.0/)
-      kine%ai_alpha(1:kine%nfft_alpha) = (/3.3288788,0.6303878,-10.9780518,2.1123398,-3.2301198,&
+      Insect%Wings(wingID)%ai_alpha(1:Insect%Wings(wingID)%nfft_alpha) = (/3.3288788,0.6303878,-10.9780518,2.1123398,-3.2301198,&
                                           -1.4473158,0.6141758,-0.3071608,0.1458498,0.0848308/)
-      kine%bi_alpha(1:kine%nfft_alpha) = (/67.5430838,0.6566888,9.9226018,3.9183988,-2.6882828,0.6433518,&
+      Insect%Wings(wingID)%bi_alpha(1:Insect%Wings(wingID)%nfft_alpha) = (/67.5430838,0.6566888,9.9226018,3.9183988,-2.6882828,0.6433518,&
                                           -0.8792398,-0.4817838,0.0300078,-0.1015118/)
-      kine%ai_theta(1:kine%nfft_theta) = (/-3.9750378,-8.2808998,0.0611208,0.3906598,-0.4488778,0.120087,&
+      Insect%Wings(wingID)%ai_theta(1:Insect%Wings(wingID)%nfft_theta) = (/-3.9750378,-8.2808998,0.0611208,0.3906598,-0.4488778,0.120087,&
                                           0.0717048,-0.0699578,0.0,0.0/)   ! - sign (Dmitry, 10 Nov 2013)
-      kine%bi_theta(1:kine%nfft_theta) = (/-2.2839398,-3.5213068,1.9296668,-1.0832488,-0.3011748,0.1786648,&
+      Insect%Wings(wingID)%bi_theta(1:Insect%Wings(wingID)%nfft_theta) = (/-2.2839398,-3.5213068,1.9296668,-1.0832488,-0.3011748,0.1786648,&
                                           -0.1228608,0.0004808,0.0,0.0/)   ! - sign (Dmitry, 10 Nov 2013)
     endif
-    kine%initialized = .true.
+    Insect%Wings(wingID)%initialized = .true.
 
-    call fseries_eval(time,phi,phi_dt    ,kine%a0_phi, kine%ai_phi(1:kine%nfft_phi), kine%bi_phi(1:kine%nfft_phi))
-    call fseries_eval(time,alpha,alpha_dt,kine%a0_alpha, kine%ai_alpha(1:kine%nfft_alpha), kine%bi_alpha(1:kine%nfft_alpha))
-    call fseries_eval(time,theta,theta_dt,kine%a0_theta, kine%ai_theta(1:kine%nfft_theta), kine%bi_theta(1:kine%nfft_theta))
+    call fseries_eval(time,phi,phi_dt    ,Insect%Wings(wingID)%a0_phi, Insect%Wings(wingID)%ai_phi(1:Insect%Wings(wingID)%nfft_phi), Insect%Wings(wingID)%bi_phi(1:Insect%Wings(wingID)%nfft_phi))
+    call fseries_eval(time,alpha,alpha_dt,Insect%Wings(wingID)%a0_alpha, Insect%Wings(wingID)%ai_alpha(1:Insect%Wings(wingID)%nfft_alpha), Insect%Wings(wingID)%bi_alpha(1:Insect%Wings(wingID)%nfft_alpha))
+    call fseries_eval(time,theta,theta_dt,Insect%Wings(wingID)%a0_theta, Insect%Wings(wingID)%ai_theta(1:Insect%Wings(wingID)%nfft_theta), Insect%Wings(wingID)%bi_theta(1:Insect%Wings(wingID)%nfft_theta))
 
     phi =  deg2rad(phi)
     alpha = deg2rad(alpha)
@@ -404,52 +387,52 @@ case ("revolving-set3-degree")
     ! Fourier coefficients analyzed with matlab
     ! Note that it begins with UPSTROKE, unlike Fry's kinematics
     !---------------------------------------------------------------------------
-    if (.not.kine%initialized) then
-      kine%nfft_alpha = 10
-      kine%nfft_theta = 10
-      kine%nfft_phi   = 10
+    if (.not.Insect%Wings(wingID)%initialized) then
+      Insect%Wings(wingID)%nfft_alpha = 10
+      Insect%Wings(wingID)%nfft_theta = 10
+      Insect%Wings(wingID)%nfft_phi   = 10
 
       ! Allocate arrays
-      if (.not. allocated(kine%ai_phi)) allocate(kine%ai_phi(kine%nfft_phi))
-      if (.not. allocated(kine%bi_phi)) allocate(kine%bi_phi(kine%nfft_phi))
-      if (.not. allocated(kine%ai_alpha)) allocate(kine%ai_alpha(kine%nfft_alpha))
-      if (.not. allocated(kine%bi_alpha)) allocate(kine%bi_alpha(kine%nfft_alpha))
-      if (.not. allocated(kine%ai_theta)) allocate(kine%ai_theta(kine%nfft_theta))
-      if (.not. allocated(kine%bi_theta)) allocate(kine%bi_theta(kine%nfft_theta))
+      if (.not. allocated(Insect%Wings(wingID)%ai_phi)) allocate(Insect%Wings(wingID)%ai_phi(Insect%Wings(wingID)%nfft_phi))
+      if (.not. allocated(Insect%Wings(wingID)%bi_phi)) allocate(Insect%Wings(wingID)%bi_phi(Insect%Wings(wingID)%nfft_phi))
+      if (.not. allocated(Insect%Wings(wingID)%ai_alpha)) allocate(Insect%Wings(wingID)%ai_alpha(Insect%Wings(wingID)%nfft_alpha))
+      if (.not. allocated(Insect%Wings(wingID)%bi_alpha)) allocate(Insect%Wings(wingID)%bi_alpha(Insect%Wings(wingID)%nfft_alpha))
+      if (.not. allocated(Insect%Wings(wingID)%ai_theta)) allocate(Insect%Wings(wingID)%ai_theta(Insect%Wings(wingID)%nfft_theta))
+      if (.not. allocated(Insect%Wings(wingID)%bi_theta)) allocate(Insect%Wings(wingID)%bi_theta(Insect%Wings(wingID)%nfft_theta))
 
-      kine%a0_phi   =38.2280144124915
-      kine%a0_alpha =1.09156750841542
-      kine%a0_theta =-17.0396438317138
-      kine%ai_phi(1:kine%nfft_phi)   =(/-60.4766838884452,-5.34194400577534,-2.79100982711466,&
+      Insect%Wings(wingID)%a0_phi   =38.2280144124915
+      Insect%Wings(wingID)%a0_alpha =1.09156750841542
+      Insect%Wings(wingID)%a0_theta =-17.0396438317138
+      Insect%Wings(wingID)%ai_phi(1:Insect%Wings(wingID)%nfft_phi)   =(/-60.4766838884452,-5.34194400577534,-2.79100982711466,&
       0.334561891664093,-0.0202655263017256,-0.323801616724358,&
       -0.474435962657283,-0.111655938200879,0.00958151551130752,&
       0.119666224142596/)
-      kine%bi_phi(1:kine%nfft_phi)   =(/3.00359559936894,-7.55184535084148,-1.32520563461209,&
+      Insect%Wings(wingID)%bi_phi(1:Insect%Wings(wingID)%nfft_phi)   =(/3.00359559936894,-7.55184535084148,-1.32520563461209,&
       -0.297351445375239,-0.213108013812305,-0.0328282543472566,&
       0.0146299151981855,-0.0385423658663155,-0.512411386850196,&
       0.0785978606299901/)
-      kine%ai_alpha(1:kine%nfft_alpha) =(/-7.73228268249956,8.09409174482393,3.98349294858406,&
+      Insect%Wings(wingID)%ai_alpha(1:Insect%Wings(wingID)%nfft_alpha) =(/-7.73228268249956,8.09409174482393,3.98349294858406,&
       6.54460609657175,4.20944598804824,0.138380341939039,&
       1.38813149742271,0.625930107014395,0.607953761451392,&
       -0.688049862096416/)
-      kine%bi_alpha(1:kine%nfft_alpha) =(/-52.2064112743351,-3.83568699799253,-14.8200023306913,&
+      Insect%Wings(wingID)%bi_alpha(1:Insect%Wings(wingID)%nfft_alpha) =(/-52.2064112743351,-3.83568699799253,-14.8200023306913,&
       4.57428035662431,1.01656074807431,-0.113387395332322,&
       0.614350733080735,0.637197524906845,0.878128257565861,&
       0.271333646229075/)
-      kine%ai_theta(1:kine%nfft_theta)  =(/-0.0876540586926952,-6.32825811106895,0.461710021840119,&
+      Insect%Wings(wingID)%ai_theta(1:Insect%Wings(wingID)%nfft_theta)  =(/-0.0876540586926952,-6.32825811106895,0.461710021840119,&
       -0.196290365124456,0.266829219535534,0.191278837298358,&
       0.0651359677824226,0.132751714936873,0.104342707251547,&
       0.0251049936194829/)
-      kine%bi_theta(1:kine%nfft_theta)  =(/5.05944308805575,-0.677547202362310,-1.30945644385840,&
+      Insect%Wings(wingID)%bi_theta(1:Insect%Wings(wingID)%nfft_theta)  =(/5.05944308805575,-0.677547202362310,-1.30945644385840,&
       -0.741962147111828,-0.351209215835472,-0.0374224119537382,&
       -0.0940160961803885,-0.0563224030429001,0.0533369476976694,&
       0.0507212428142968/)
-      kine%initialized = .true.
+      Insect%Wings(wingID)%initialized = .true.
     endif
 
-    call fseries_eval(time,phi,phi_dt    ,kine%a0_phi, kine%ai_phi(1:kine%nfft_phi), kine%bi_phi(1:kine%nfft_phi))
-    call fseries_eval(time,alpha,alpha_dt,kine%a0_alpha, kine%ai_alpha(1:kine%nfft_alpha), kine%bi_alpha(1:kine%nfft_alpha))
-    call fseries_eval(time,theta,theta_dt,kine%a0_theta, kine%ai_theta(1:kine%nfft_theta), kine%bi_theta(1:kine%nfft_theta))
+    call fseries_eval(time,phi,phi_dt    ,Insect%Wings(wingID)%a0_phi, Insect%Wings(wingID)%ai_phi(1:Insect%Wings(wingID)%nfft_phi), Insect%Wings(wingID)%bi_phi(1:Insect%Wings(wingID)%nfft_phi))
+    call fseries_eval(time,alpha,alpha_dt,Insect%Wings(wingID)%a0_alpha, Insect%Wings(wingID)%ai_alpha(1:Insect%Wings(wingID)%nfft_alpha), Insect%Wings(wingID)%bi_alpha(1:Insect%Wings(wingID)%nfft_alpha))
+    call fseries_eval(time,theta,theta_dt,Insect%Wings(wingID)%a0_theta, Insect%Wings(wingID)%ai_theta(1:Insect%Wings(wingID)%nfft_theta), Insect%Wings(wingID)%bi_theta(1:Insect%Wings(wingID)%nfft_theta))
 
     phi =  deg2rad(phi)
     alpha = deg2rad(alpha)
@@ -965,6 +948,14 @@ case ("revolving-set3-degree")
     phi_dt   = 0.0
     alpha_dt = 0.0
     theta_dt = 0.0
+  
+  case ("NOT-USED")
+    phi   = 0.0_rk
+    alpha = 0.0_rk
+    theta = 0.0_rk
+    phi_dt   = 0.0_rk
+    alpha_dt = 0.0_rk
+    theta_dt = 0.0_rk
   case default
     write(*,*) "value is: "//trim(adjustl(protocoll))
     call abort(121212,"insects.f90::FlappingMotion: motion case (protocoll) undefined")

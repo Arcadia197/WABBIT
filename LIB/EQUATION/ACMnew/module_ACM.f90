@@ -188,6 +188,8 @@ contains
 
     type(inifile) :: FILE
     integer :: Neqn, i, insect_id
+    character(len=clong) :: SECTION
+    logical :: section_exists
 
     N_mask_components = 0
     ! WABBIT decides how many ghost nodes we have (because the versions >=2024 determine G 
@@ -290,6 +292,7 @@ contains
     ! if not, we read in an array of geometries and can sert in several geometry files or strings
     call read_param_mpi(FILE, 'VPM', 'geometry', params_acm%geometry_legacy, "")
     if (params_acm%geometry_legacy /= "") then
+        ! we have found the keyword "geometry"
         params_acm%n_geometries = 1
         allocate(params_acm%geometries(1))
         allocate(params_acm%geometry_files(1))
@@ -456,7 +459,6 @@ contains
     endif
     params_acm%Bs = read_bs(FILE,'Blocks', 'number_block_nodes', params_acm%Bs, params_acm%dim, params_acm%mpirank)
 
-    call clean_ini_file_mpi( FILE )
 
     if (Neqn /= params_acm%dim + 1 + params_acm%N_scalars) then
         ! call abort(220819, "the state vector length is not appropriate. number_equation must be DIM+1+N_scalars")
@@ -546,7 +548,7 @@ contains
         ! if used, setup insect. Note active grid is part of the insects: they require the same init module
         !
         ! NOTE: there are several testing geometries used to test the free-flight solver: cylinder-free, sphere-free and plate-free (2D)
-        if (strings_are_similar(params_acm%geometries(i), "insect") .or. strings_are_similar(params_acm%geometries(i), "active_grid") .or. &
+        if (strings_are_similar(params_acm%geometries(i), "insect") .or. &
             strings_are_similar(params_acm%geometries(i), "cylinder-free") .or. strings_are_similar(params_acm%geometries(i), "sphere-free") .or. &
             strings_are_similar(params_acm%geometries(i), "plate-free")) then
             ! when computing passive scalars, we require derivatives of the mask function, which
@@ -555,11 +557,37 @@ contains
             ! Its a waste of resources otherwise. Hence, we have the flag to set masks on ghost nodes as well
             ! to set the mask on all points of a block (incl ghost nodes)
             call get_insect_id( i, insect_id )
+
+            ! we differentiate different insects, legacy one is [Insects], new INI files are "Insect1", "Insect2", etc
+            if (Insect_ID > 1) then
+                write(SECTION, '(A,I0)') "Insect", Insect_ID
+                ! check if section exists
+                call param_section_exists_mpi(FILE, SECTION, section_exists)
+                if (.not. section_exists) then
+                    call abort(260602, "Insect flew away, no section found for " // trim(SECTION))
+                endif
+            else
+                ! If insect_ID==1, we either read from [Insects], which is the old format, or from the new format [Insect1]
+                ! if [Insects] is found - we take that. That ensures compatibility with old INI files.
+                SECTION = "Insects"
+                ! check if insect parameters are under legacy name
+                call param_section_exists_mpi(FILE, SECTION, section_exists)
+                if (.not. section_exists) then
+                    ! if not, then we use "Insect1" as section name for the first insect, to be consistent with the other ones
+                    write(SECTION, '(A,I0)') "Insect", Insect_ID
+                    call param_section_exists_mpi(FILE, SECTION, section_exists)
+                    ! if this is also not found, then we give up
+                    if (.not. section_exists) then
+                        call abort(260602, "Insect flew away, no section found for " // trim(SECTION))
+                    endif
+                endif
+            endif
+
             if (params_acm%set_mask_on_ghost_nodes) then
-                call insect_init( params_acm%start_time, filename, insect_id, params_acm%read_from_files, "", params_acm%domain_size, &
+                call initialize_insect( params_acm%start_time, filename, Insects(insect_id), SECTION, insect_id, params_acm%read_from_files, "", params_acm%domain_size, &
                 params_acm%nu, params_acm%C_eta, dx_min, params_acm%smoothing_type(i), N_ghost_nodes=0, colors_default=(/params_acm%n_geometries+1+5*(insect_id-1),params_acm%n_geometries+2+5*(insect_id-1),params_acm%n_geometries+3+5*(insect_id-1),params_acm%n_geometries+4+5*(insect_id-1),params_acm%n_geometries+5+5*(insect_id-1), params_acm%geometry_colors(i)/))
             else
-                call insect_init( params_acm%start_time, filename, insect_id, params_acm%read_from_files, "", params_acm%domain_size, &
+                call initialize_insect( params_acm%start_time, filename, Insects(insect_id), SECTION, insect_id, params_acm%read_from_files, "", params_acm%domain_size, &
                 params_acm%nu, params_acm%C_eta, dx_min, params_acm%smoothing_type(i), N_ghost_nodes=g, colors_default=(/params_acm%n_geometries+1+5*(insect_id-1),params_acm%n_geometries+2+5*(insect_id-1),params_acm%n_geometries+3+5*(insect_id-1),params_acm%n_geometries+4+5*(insect_id-1),params_acm%n_geometries+5+5*(insect_id-1), params_acm%geometry_colors(i)/))
             endif
 
@@ -610,6 +638,8 @@ contains
 
     ! now initialze force arrays for colors at last, because we know how many colors we have
     allocate( params_acm%force_color(1:3, 1:ncolors), params_acm%moment_color(1:3, 1:ncolors), params_acm%mask_volume(1:ncolors), params_acm%usolid_max_color(1:3, 1:ncolors), params_acm%usolid_min_color(1:3, 1:ncolors) )
+
+    call clean_ini_file_mpi( FILE )
 
     params_acm%initialized = .true.
   end subroutine READ_PARAMETERS_ACM

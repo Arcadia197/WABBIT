@@ -189,7 +189,7 @@ subroutine post_dry_run(params)
     call init_t_file('eps_norm.t', overwrite=.true.)
 
     is_insect = .false.
-    if (any(params_acm%geometries(:) == "Insect").or.any(params_acm%geometries(:)=="active_grid") &
+    if (any(params_acm%geometries(:) == "Insect") &
     .or. any(params_acm%geometries(:)=="cylinder-free").or.any(params_acm%geometries(:)=="sphere-free").or.any(params_acm%geometries(:)=="plate-free")) is_insect = .true.
 
     !-----------------------------------

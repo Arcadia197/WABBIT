@@ -57,8 +57,8 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
     !   n+6-n+10    parts of insect2 (body, left wing, right wing, left wing2, right wing2)
     !   ...
     integer(kind=2) :: color
-    logical :: is_insect, has_two_wings
-    integer :: i_insect
+    logical :: is_insect, twoWingPairs
+    integer :: i_insect, wingID
     character(len=64) :: fname
     real(kind=rk) :: buffer_write(1:2, 1:100)  ! buffer for writing to file, usefull to write several columns instead of several files
 
@@ -89,12 +89,12 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
 
     ! save some computing time by using a logical and not comparing every time
     is_insect = .false.
-    if (any(params_nspp%geometries(:) == "Insect").or.any(params_nspp%geometries(:)=="active_grid") &
+    if (any(params_nspp%geometries(:) == "Insect") &
         .or. any(params_nspp%geometries(:)=="cylinder-free").or.any(params_nspp%geometries(:)=="sphere-free").or.any(params_nspp%geometries(:)=="plate-free")) is_insect = .true.
 
-    has_two_wings = .false.
+    twoWingPairs = .false.
     do i_insect = 1, n_insects
-        has_two_wings = has_two_wings .or. (insects(i_insect)%second_wing_pair)
+        twoWingPairs = twoWingPairs .or. (insects(i_insect)%second_wing_pair)
     enddo
 
 
@@ -179,18 +179,35 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
         x0_moment(3,:) = params_nspp%x_cntr(3)
         ! in insects, other levers are used
         ! some preparations that we do not want to compute each time within the loop
+        ! do i_insect = 1, n_insects
+        !     ! body moment
+        !     x0_moment(1:3, Insects(i_insect)%color_body) = Insects(i_insect)%xc_body_g
+        !     ! left wing
+        !     x0_moment(1:3, Insects(i_insect)%color_l) = Insects(i_insect)%x_pivot_l_g
+        !     ! right wing
+        !     x0_moment(1:3, Insects(i_insect)%color_r) = Insects(i_insect)%x_pivot_r_g
+        !     ! second left and second right wings
+        !     if (Insects(i_insect)%second_wing_pair) then
+        !         x0_moment(1:3, Insects(i_insect)%color_l2) = Insects(i_insect)%x_pivot_l2_g
+        !         x0_moment(1:3, Insects(i_insect)%color_r2) = Insects(i_insect)%x_pivot_r2_g
+        !     endif
+        ! enddo
         do i_insect = 1, n_insects
             ! body moment
             x0_moment(1:3, Insects(i_insect)%color_body) = Insects(i_insect)%xc_body_g
-            ! left wing
-            x0_moment(1:3, Insects(i_insect)%color_l) = Insects(i_insect)%x_pivot_l_g
-            ! right wing
-            x0_moment(1:3, Insects(i_insect)%color_r) = Insects(i_insect)%x_pivot_r_g
-            ! second left and second right wings
-            if (Insects(i_insect)%second_wing_pair) then
-                x0_moment(1:3, Insects(i_insect)%color_l2) = Insects(i_insect)%x_pivot_l2_g
-                x0_moment(1:3, Insects(i_insect)%color_r2) = Insects(i_insect)%x_pivot_r2_g
-            endif
+
+            do wingID = 1,4
+                x0_moment(1:3, Insects(i_insect)%Wings(wingID)%color) = Insects(i_insect)%Wings(wingID)%x_pivot_g
+            enddo
+            ! ! left wing
+            ! x0_moment(1:3, Insects(i_insect)%color_l) = Insects(i_insect)%x_pivot_l_g
+            ! ! right wing
+            ! x0_moment(1:3, Insects(i_insect)%color_r) = Insects(i_insect)%x_pivot_r_g
+            ! ! second left and second right wings
+            ! if (Insects(i_insect)%second_wing_pair) then
+            !     x0_moment(1:3, Insects(i_insect)%color_l2) = Insects(i_insect)%x_pivot_l2_g
+            !     x0_moment(1:3, Insects(i_insect)%color_r2) = Insects(i_insect)%x_pivot_r2_g
+            ! endif
         enddo
 
 
@@ -534,7 +551,7 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
                     call append_t_file( 'forces_rightwing.t', (/time, buffer_write(1, 1:3*n_insects)/) )
                     call append_t_file( 'moments_rightwing.t', (/time, buffer_write(2, 1:3*n_insects)/) )
 
-                    if (has_two_wings) then
+                    if (twoWingPairs) then
                         ! second left wing
                         do i_insect = 1, n_insects
                             if (Insects(i_insect)%second_wing_pair) then

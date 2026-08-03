@@ -336,6 +336,9 @@ class WabbitTest:
                 os.system( 'ln -s ../*.kineloader')
                 os.system( 'ln -s ../*.superstl')
                 os.system( 'ln -s ../singlewing.ini')
+            if self.test_name == "dry_bumblebee":
+                os.system('cp ../*.ini .')
+
 
             # run simmulation
             command1 = f"{self.mpi_command} {self.run_dir}/wabbit-post --dry-run {ini_file} --memory={self.memory} --pruned {save_us}"

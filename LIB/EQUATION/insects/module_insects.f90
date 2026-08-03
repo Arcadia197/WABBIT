@@ -13,13 +13,12 @@ module module_insects
    PRIVATE
 
    ! functions
-   PUBLIC :: Draw_Insect, draw_insect_body, draw_insect_wings, insect_geometry_indicator, Update_All_Insects, insects_array_init, insect_init, &
-      insects_clean, insect_clean, draw_active_grid_winglets, init_insect_data, write_insect_data, &
+   PUBLIC :: Draw_Insect, draw_insect_body, draw_insect_wings, insect_geometry_indicator, Update_All_Insects, insects_array_init, initialize_insect, &
+      clean_all_insects, clean_insect, init_insect_data, write_insect_data, &
       aero_power, inert_power, read_insect_STATE_from_file, rigid_solid_init, rigid_solid_rhs, &
-      BodyMotion, FlappingMotionWrap, StrokePlane, mask_from_pointcloud, &
-      body_rotation_matrix, wing_rotation_matrix
+      BodyMotion, FlappingMotionWrap, body_rotation_matrix, wing_rotation_matrix
    ! type definitions
-   PUBLIC :: wingkinematics, diptera
+   PUBLIC :: diptera
 
    ! we use this so only root prints write statements...
    logical :: root = .false.
@@ -40,31 +39,137 @@ module module_insects
    ! viscosity (just for printing the Reynolds number), this can always be global because it is not insect-specific
    real(kind=rk) :: nu
 
-   ! arrays for fourier coefficients are fixed size (avoiding issues with allocatable
-   ! elements in derived datatypes) this is their length:
-   integer, parameter :: nfft_max = 1024
 
-   !-----------------------------------------------------------------------------
-   ! TYPE DEFINITIONS
-   ! datatype for wing kinematics, if described by a Fourier series or kineloader
-   ! For both wings such a datatype is contained in the insect.
-   type wingkinematics
-      ! Fourier coefficients
+
+   ! **********************************************************************************************
+   ! **                              DEFINITION OF A WING                                        **
+   ! **********************************************************************************************
+   ! we have one wing type that regroups all parameters for a wing: shape, kinematics, etc
+   type wing_type
+      ! is the wing used or not
+      logical :: used = .false.
+      
+      ! is this wing on the left or right side ?
+      character(len=1) :: side = "X" ! can be "R" or "L" only, to ensure initialization set to "X"
+
+      ! coordinates of shoulder (pivot) point
+      real(kind=rk), dimension(1:3) :: x_pivot_g, x_pivot_b
+
+      !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      !~                SHAPE / GEOMETRY                    ~
+      !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      character(len=clong) :: WingShape = ""
+      character(len=clong) :: WingShapeType = "fourier"
+
+      ! ---- generic parameters -----
+      real(kind=rk) :: b_top=0.0_rk, b_bot=0.0_rk, L_span=0.0_rk, WingThickness=0.0_rk
+      integer(kind=2) :: color
+
+      ! ---- wing shapes with polar coordinates description ----
+      ! Fourier coefficients for wing shape
+      real(kind=rk), allocatable :: ai_shape(:), bi_shape(:)
+      real(kind=rk) :: a0_shape
+      ! fill the R0(theta) array once, then only table-lookup (linear interpolation) is used instead of Fseries
+      real(kind=rk), allocatable :: R0_table(:)
+      ! the center of the polar coordinates, in the wing system
+      real(kind=rk) :: xc=0.0_rk, yc=0.0_rk
+      logical :: wings_radius_table_ready = .false.
+      ! wing bounding box (xmin, xmax, ymin, ymax, zmin, zmax)
+      ! in the wing system
+      real(kind=rk) :: wing_bounding_box(1:6) = 0.0_rk
+
+      ! ---- wing shapes with polygon description (no radius) ----
+      ! polygon_wings(:,1) = x_w coordinates
+      ! polygon_wings(:,2) = y_w coordinates
+      real(kind=rk), allocatable :: polygon_wings(:,:)
+      integer(kind=ik) :: n_polygon_points = 0
+
+      ! ---- wing damage ----
+      ! used for musca domestica wing damage project
+      logical :: damaged = .false.
+      ! wing damage mask
+      real(kind=rk), allocatable, dimension(:,:) :: damage_mask
+
+      ! ---- wing corrugation (non-constant z values) ----
+      ! Published in T. Engels, H.-N. Wehmann, F.-O. Lehmann, Three-dimensional wing structure attenuates aerodynamic efficiency in flapping fly wings. J. R. Soc. Interface 17, 20190804, link (open access), 2020
+      ! wing thickness profile
+      real(kind=rk), allocatable, dimension(:,:) :: wing_thickness_profile
+      character(len=clong) :: wing_thickness_distribution = "constant"
+      real(kind=rk) :: wing_thickness_value = 0.05
+      ! wing corrugation profile
+      logical :: corrugated = .false.
+      real(kind=rk), allocatable, dimension(:,:) :: corrugation_profile
+      ! the 2D arrays damage_mask, corrugation_profile and wing_thickness_profile
+      ! are equidistant grids, and their bounding box is all the same:
+      real(kind=rk) :: corrugation_array_bbox(1:4)
+
+      ! ---- bristles ----
+      logical :: bristles = .false.
+      logical :: bristles3D = .false.
+      logical :: bristles_simplex = .false.
+      integer(kind=ik) :: n_bristles
+      real(kind=rk), allocatable :: bristles_coords(:,:)
+
+      ! !KVN-2025>>>>>
+      ! ! NOTE: prescribed wing deformation is untested work in progress! -TE 02/2026
+      ! real(kind=rk), allocatable, dimension(:,:) :: deformations
+      ! real(kind=rk), allocatable, dimension(:,:) :: deformation_profile
+      ! integer(kind=ik) :: deformation_a, deformation_b, deformation_c
+      ! !KVN-2025<<<<<
+
+      ! ! wing signed distance function, if the 3d-interpolation approach is used.
+      ! ! This is useful for highly complex wings, where one generates the mask only once
+      ! ! and then interpolates the values to the global grid. note the data allocated
+      ! ! here is of course understood in the wing system, so the linear transformation
+      ! ! x_g -> x_w' is used, where x_w' is not a grid-aligned value x_w
+      ! real(kind=rk), allocatable, dimension(:,:,:) :: mask_wing_complete
+      ! real(kind=rk), dimension(1:3) :: mask_wing_xl, mask_wing_x0
+      ! integer, dimension(1:3) :: mask_wing_nxyz
+      ! integer :: mask_wing_safety=4
+
+      ! moment of inertia of the wing in the wing system
+      real(kind=rk) :: Jxx=0.0_rk, Jyy=0.0_rk, Jzz=0.0_rk, Jxy=0.0_rk
+
+      !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      !~                KINEMATICS                          ~
+      !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      character(len=clong) :: FlappingMotion = "NOT-SET-YET"
+
+      ! Fourier coefficients, if kinematics given by Fourier series
       real(kind=rk) :: a0_alpha=0.0_rk, a0_phi=0.0_rk, a0_theta=0.0_rk
-      real(kind=rk), allocatable :: ai_phi(:), bi_phi(:), ai_theta(:), &
-         bi_theta(:), ai_alpha(:), bi_alpha(:)
+      real(kind=rk), allocatable :: ai_phi(:), bi_phi(:), ai_theta(:), bi_theta(:), ai_alpha(:), bi_alpha(:)
       integer :: nfft_phi=0, nfft_alpha=0, nfft_theta=0
       ! coefficients are read only once from file (or set differently)
       logical :: initialized = .false.
       ! some details about the file, if reading from ini file
-      character(len=clong) :: infile_convention="", infile_type="", infile_units="", infile=""
+      character(len=clong) :: infile_convention="", infile_type="", infile_units="", infile="NOT-USED"
+
+      ! angles of the wing (flapping, feathering and deviation)
+      real(kind=rk) :: phi=0.0_rk, alpha=0.0_rk, theta=0.0_rk, phi_dt=0.0_rk, alpha_dt=0.0_rk, theta_dt=0.0_rk
+
+      ! angular velocities
+      real(kind=rk), dimension(1:3) :: rot_rel_wing_w=0.0_rk
+      real(kind=rk), dimension(1:3) :: rot_rel_wing_b=0.0_rk
+      real(kind=rk), dimension(1:3) :: rot_rel_wing_g=0.0_rk
+      ! angular acceleration vectors (left and right wings, 2nd left and 2nd right wings)
+      real(kind=rk), dimension(1:3) :: rot_dt_wing_w=0.0_rk
+      real(kind=rk), dimension(1:3) :: rot_dt_wing_g=0.0_rk
+
+      ! rotation matrices for the various coordinate system for the insect
+      real(kind=rk),dimension(1:3,1:3) :: M_b2w
+
    end type
 
-
-   !-----------------------------------------------------------------------------
-   ! derived datatype for insect parameters (for readability)
+   ! **********************************************************************************************
+   ! **                              DEFINITION OF AN INSECT                                     **
+   ! **********************************************************************************************
    type diptera
       logical :: initialized = .false.
+
+      ! most variables are hidden here, because they are wing-specific
+      ! (yes, I know that diptera have only two wings.)
+      type(wing_type) :: Wings(1:4)
+
       !-------------------------------------------------------------
       ! Body motion state, wing motion state and characteristic points on insect
       !-------------------------------------------------------------
@@ -75,40 +180,21 @@ module module_insects
       ! first harmonic components of the yawpitchroll angles
       real(kind=rk), dimension(1:3) :: yawpitchroll_a1=0.0_rk, yawpitchroll_b1=0.0_rk
       ! roll pitch yaw angles and their time derivatives
-      real(kind=rk) :: psi=0.0_rk, beta=0.0_rk, gamma=0.0_rk, psi_dt=0.0_rk, beta_dt=0.0_rk, gamma_dt=0.0_rk, eta0=0.0_rk
-      ! body pitch angle, if it is constant (used in forward flight and hovering)
-      real(kind=rk) :: body_pitch_const=0.0_rk
-      ! angles of the wings (left and right, second left and second right)
-      real(kind=rk) :: phi_r=0.0_rk, alpha_r=0.0_rk, theta_r=0.0_rk, phi_dt_r=0.0_rk, alpha_dt_r=0.0_rk, theta_dt_r=0.0_rk
-      real(kind=rk) :: phi_l=0.0_rk, alpha_l=0.0_rk, theta_l=0.0_rk, phi_dt_l=0.0_rk, alpha_dt_l=0.0_rk, theta_dt_l=0.0_rk
-      real(kind=rk) :: phi_r2=0.0_rk, alpha_r2=0.0_rk, theta_r2=0.0_rk, phi_dt_r2=0.0_rk, alpha_dt_r2=0.0_rk, theta_dt_r2=0.0_rk
-      real(kind=rk) :: phi_l2=0.0_rk, alpha_l2=0.0_rk, theta_l2=0.0_rk, phi_dt_l2=0.0_rk, alpha_dt_l2=0.0_rk, theta_dt_l2=0.0_rk
+      real(kind=rk) :: psi=0.0_rk, beta=0.0_rk, gamma=0.0_rk, psi_dt=0.0_rk, beta_dt=0.0_rk, gamma_dt=0.0_rk
       ! stroke plane angle
       real(kind=rk) :: eta_stroke=0.0_rk
       ! is the body motion state described be the STATE vector? This is the case if the
       ! free-flight solver is used, and if its results are read in postprocessing or
       ! if it used used to prescribe the body motion state from a different simulation
       logical :: quaternion_solver_used = .false.
+
       ! angular velocity vectors (body, left and right wings, 2nd left and 2nd right wings)
       real(kind=rk), dimension(1:3) :: rot_body_b=0.0_rk, rot_body_g=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_rel_wing_l_w=0.0_rk, rot_rel_wing_r_w=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_rel_wing_l_b=0.0_rk, rot_rel_wing_r_b=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_rel_wing_l_g=0.0_rk, rot_rel_wing_r_g=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_rel_wing_l2_w=0.0_rk, rot_rel_wing_r2_w=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_rel_wing_l2_b=0.0_rk, rot_rel_wing_r2_b=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_rel_wing_l2_g=0.0_rk, rot_rel_wing_r2_g=0.0_rk
-      ! angular acceleration vectors (left and right wings, 2nd left and 2nd right wings)
-      real(kind=rk), dimension(1:3) :: rot_dt_wing_l_w=0.0_rk, rot_dt_wing_r_w=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_dt_wing_l_g=0.0_rk, rot_dt_wing_r_g=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_dt_wing_l2_w=0.0_rk, rot_dt_wing_r2_w=0.0_rk
-      real(kind=rk), dimension(1:3) :: rot_dt_wing_l2_g=0.0_rk, rot_dt_wing_r2_g=0.0_rk
-      ! Vector from body centre to pivot points in global reference frame
-      real(kind=rk), dimension(1:3) :: x_pivot_l_g=0.0_rk, x_pivot_r_g=0.0_rk
-      real(kind=rk), dimension(1:3) :: x_pivot_l2_g=0.0_rk, x_pivot_r2_g=0.0_rk
-      ! vectors desribing the positoions of insect's key elements
+
+      ! vectors desribing the positions of insect's key elements
       ! in the body coordinate system
-      real(kind=rk), dimension(1:3) :: x_head=0.0_rk,x_eye_r=0.0_rk,x_eye_l=0.0_rk,x_pivot_l_b=0.0_rk,x_pivot_r_b=0.0_rk
-      real(kind=rk), dimension(1:3) :: x_pivot_l2_b=0.0_rk,x_pivot_r2_b=0.0_rk
+      real(kind=rk), dimension(1:3) :: x_head=0.0_rk, x_eye_r=0.0_rk, x_eye_l=0.0_rk
+
       ! moments of inertia in the body reference frame
       real(kind=rk) :: Jroll_body=0.0_rk, Jyaw_body=0.0_rk, Jpitch_body=0.0_rk
       ! total mass of insect:
@@ -116,9 +202,9 @@ module module_insects
       ! variables to decide whether to draw the body or not.
       character(len=clong) :: body_moves="yes"
       character(len=clong) :: BodySuperSTLfile="none.superstl"
-      logical :: body_already_drawn = .false.
       ! second wing pair exists or not
       logical :: second_wing_pair
+      
 
       !-------------------------------------------------------------
       ! for kinematics loader 
@@ -209,92 +295,33 @@ module module_insects
       real(kind=rk), dimension(1:3) :: torque_muscle_l_w=0.0_rk, torque_muscle_r_w=0.0_rk
       real(kind=rk), dimension(1:3) :: torque_muscle_l_b=0.0_rk, torque_muscle_r_b=0.0_rk
       real(kind=rk), dimension(1:3) :: init_alpha_phi_theta=0.0_rk
-      !-------------------------------------------------------------
-      ! wing shape parameters
-      !-------------------------------------------------------------
-      ! wing shape fourier coefficients. Note notation:
-      ! R = a0/2 + SUM ( ai cos(2pi*i) + bi sin(2pi*i)  )
-      real(kind=rk), allocatable :: ai_wings(:,:), bi_wings(:,:)
-      real(kind=rk), dimension(1:4) :: a0_wings=0.0_rk
-      ! fill the R0(theta) array once, then only table-lookup instead of Fseries
-      real(kind=rk), allocatable :: R0_table(:,:)
-      ! describes the origin of the wings system
-      real(kind=rk), dimension(1:4) :: xc=0.0_rk, yc=0.0_rk
-      ! number of fft coefficients for wing geometry
-      integer, dimension(1:4) :: nfft_wings=0
-      logical, dimension(1:4) :: wingsetup_done = .false.
-      logical, dimension(1:4) :: wings_radius_table_ready = .false.
-      real(kind=rk), dimension(:), allocatable :: theta_i, R_i
-      ! wing bounding box (xmin, xmax, ymin, ymax, zmin, zmax)
-      real(kind=rk) :: wing_bounding_box(1:6,1:4) = 0.0_rk
-      ! wing inertia
-      real(kind=rk) :: Jxx=0.0_rk,Jyy=0.0_rk,Jzz=0.0_rk,Jxy=0.0_rk
-      ! wing inertia of the second pair of wings
-      real(kind=rk) :: Jxx2=0.0_rk,Jyy2=0.0_rk,Jzz2=0.0_rk,Jxy2=0.0_rk
-      character(len=clong) :: wing_thickness_distribution(1:4) = "constant"
-      character(len=clong) :: pointcloudfile = "none"
-      character(len=clong) :: smoothing_thickness = "global", wing_file_type(1:4) = "fourier"
-      logical :: corrugated(1:4) = .false.
-      real(kind=rk) :: corrugation_array_bbox(1:4,1:4)
-      !KVN-2025>>>>>
-      ! NOTE: prescribed wing deformation is untested work in progress! -TE 02/2026
-      logical :: deformable(1:4) = .false.
-      real(kind=rk) :: deformation_array_bbox(1:4,1:4)
-      !KVN-2025<<<<<
-      ! stuff for bristles
-      !KVN-2025>>>>>
-      logical :: bristles3D(1:4) = .false.
-      !KVN-2025<<<<<
-      logical :: bristles(1:4) = .false.
-      logical :: bristles_simplex(1:4) = .false.
-      integer :: n_bristles(1:4)
-      real(kind=rk), ALLOCATABLE :: bristles_coords(:,:,:)
-      ! used for rectangular part of bristled model wings (Kleemeier)
-      real(kind=rk) :: B_membrane(1:4), L_membrane(1:4)
-      logical :: damaged(1:4) = .false.
 
-	   ! polygon wing geometry
-      ! polygon_wings(:,1) = x_w coordinates
-      ! polygon_wings(:,2) = y_w coordinates
-      real(kind=rk), allocatable :: polygon_wings(:,:)
-      integer(kind=ik) :: n_polygon_points = 0
-
-      !--------------------------------------------------------------
-      ! Wing kinematics
-      !--------------------------------------------------------------
-      ! wing kinematics Fourier coefficients
-      type(wingkinematics) :: kine_wing_l, kine_wing_r
-      type(wingkinematics) :: kine_wing_l2, kine_wing_r2
       ! the following flag makes the code write the kinematics log to either kinematics.t
       ! (regular simulation) or kinematics.dry-run.t (for a dry run). The reason for this
       ! is that during postprocessing of an existing run, the dry run would overwrite the
       ! simulation data.
       character(len=clong) :: kinematics_file = "kinematics.t"
       ! rotation matrices for the various coordinate system for the insect
-      real(kind=rk),dimension(1:3,1:3) :: M_g2b, M_b2w_l, M_b2w_r, M_b2g
-      real(kind=rk),dimension(1:3,1:3) :: M_b2w_l2, M_b2w_r2
+      real(kind=rk),dimension(1:3,1:3) :: M_g2b, M_b2g
 
       !-------------------------------------------------------------
       ! parameters that control shape of wings, body, and motion
       !-------------------------------------------------------------
-      character(len=clong) :: WingShape(1:4)=["","","",""] ! left, right, 2nd left, 2nd right
       character(len=clong) :: BodyType="", BodyMotion=""
-      character(len=clong) :: FlappingMotion_right="", FlappingMotion_left=""
-      character(len=clong) :: FlappingMotion_right2="", FlappingMotion_left2=""
-      character(len=clong) :: infile="", LeftWing="", RightWing=""
-      character(len=clong) :: infile2="", LeftWing2="", RightWing2=""
       ! parameters for body:
       real(kind=rk) :: L_body=0.0_rk, b_body=0.0_rk, R_head=0.0_rk, R_eye=0.0_rk
       ! parameters for wing shape:
-      real(kind=rk) :: b_top=0.0_rk, b_bot=0.0_rk, L_span=0.0_rk, WingThickness=0.0_rk
+      real(kind=rk) :: b_top=0.0_rk, b_bot=0.0_rk, L_span=0.0_rk
+      ! WingThickness is also a part of the diptera type (even though it is a wing property), because it
+      ! sets the default for all wings. This parameter is read from the main PARAMS.INI file, while each wing
+      ! may read its own thickness from the wing INI file. the value read from main is the default when reading the wing.
+      real(kind=rk) :: WingThickness=0.0_rk
       ! this is a safety distance for smoothing:
-      real(kind=rk) :: safety=0.0_rk, smooth=0.0_rk, C_smooth=1.0_rk, dx_reference=0.0_rk, C_shell_thickness=5.0_rk
+      real(kind=rk) :: safety=0.0_rk, L_smooth=0.0_rk, C_smooth=1.0_rk, dx_reference=0.0_rk, C_shell_thickness=5.0_rk
       ! some more VPM parameters will be stored in the insect, that can be individual
       character(len=clong) :: smoothing_type=""
       integer :: smoothing_type_int=0  ! in point-wise loops, we have to avoid character comparisons, so we use this integer
       real(kind=rk) :: epsilon_hester=0.0_rk
-      ! parameter for hovering:
-      real(kind=rk) :: distance_from_sponge=0.0_rk
       ! Wings and body forces (1:body, 2:left wing, 3:right wing, 4:left wing, 5:right wing)
       type(Integrals), dimension(1:5) :: PartIntegrals
 
@@ -310,41 +337,6 @@ module module_insects
       ! color_geometry - color of the full insect, used for computing forces / moments wrt the full insect
       integer(kind=2) :: color_body=1, color_l=2, color_r=3, color_l2=4, color_r2=5, color_geometry=0
 
-      !-------------------------------------------------------------
-      ! Allocatable arrays used in Insect object
-      !-------------------------------------------------------------
-
-      ! this will hold the surface markers and their normals used for particles:
-      real(kind=rk), allocatable, dimension(:,:) :: particle_points
-      ! wing thickness profile
-      real(kind=rk), allocatable, dimension(:,:,:) :: wing_thickness_profile
-      ! wing thickness profile array dimensions
-      integer, dimension(1:4) :: wing_thickness_a, wing_thickness_b
-      ! wing corrugation profile
-      real(kind=rk), allocatable, dimension(:,:,:) :: corrugation_profile
-      ! wing corrugation profile array dimensions
-      integer, dimension(1:4) :: corrugation_a, corrugation_b
-      ! wing damage mask
-      real(kind=rk), allocatable, dimension(:,:,:) :: damage_mask
-      ! wing damage mask array dimensions
-      integer, dimension(1:4) :: damage_a, damage_b
-      !KVN-2025>>>>>
-      ! NOTE: prescribed wing deformation is untested work in progress! -TE 02/2026
-      real(kind=rk), allocatable, dimension(:,:,:) :: deformations
-      real(kind=rk), allocatable, dimension(:,:,:) :: deformation_profile
-      integer, dimension(1:4) :: deformation_a, deformation_b, deformation_c
-      !KVN-2025<<<<<
-
-      ! wing signed distance function, if the 3d-interpolation approach is used.
-      ! This is useful for highly complex wings, where one generates the mask only once
-      ! and then interpolates the values to the global grid. note the data allocated
-      ! here is of course understood in the wing system, so the linear transformation
-      ! x_g -> x_w' is used, where x_w' is not a grid-aligned value x_w
-      real(kind=rk), allocatable, dimension(:,:,:) :: mask_wing_complete
-      real(kind=rk), dimension(1:3) :: mask_wing_xl, mask_wing_x0
-      integer, dimension(1:3) :: mask_wing_nxyz
-      integer :: mask_wing_safety=4
-
       !-----------------------------------------------------------------------------
       ! array for superSTL file for the body
       real(kind=rk), allocatable :: body_superSTL_b(:,:)
@@ -353,7 +345,7 @@ module module_insects
    !-----------------------------------------------------------------------------
 
    ! this module contains the insects objects. All other routines have to implicitly call update routines of this module to work with them
-   ! It's a bit inconvenient that this is located underneath the type definition, but it is necessary
+   ! It's a bit inconvenient that this is located below the type definition, but it is necessary
    integer(kind=ik), public :: n_insects = 0
    type(diptera), allocatable, public :: Insects(:)
 
@@ -369,111 +361,10 @@ contains
 #include "rigid_solid_time_stepper.f90"
 #include "wings_geometry.f90"
 #include "wings_motion.f90"
-#include "stroke_plane.f90"
 #include "kineloader.f90"
-#include "pointcloud.f90"
-! #include "fractal_trees.f90"
-#include "active_grid_winglets.f90"
 !---------------------------------------
 
 
-   !-------------------------------------------------------------------------------
-   ! Wrapper for dynamic array allocation within Insect structure
-   ! This cannot be 'include'-ed to allow conditional compilation with cpp,
-   ! as SX compiler only supports static arrays within structures
-   !-------------------------------------------------------------------------------
-   subroutine Allocate_Arrays ( Insect, array_name, a, b )
-      implicit none
-
-      character(len=*), intent(in) :: array_name
-      integer, intent(in) :: a, b
-      type(diptera), intent(inout) :: Insect
-      integer :: a_old, b_old
-      real(kind=rk), allocatable, dimension(:,:,:) :: profile_tmp
-
-      select case ( array_name )
-       case ("wing_thickness_profile")
-         if (.not.allocated(Insect%wing_thickness_profile)) then
-            allocate(Insect%wing_thickness_profile(1:a,1:b,1:4))
-         else
-            a_old = size(Insect%wing_thickness_profile,1)
-            b_old = size(Insect%wing_thickness_profile,2)
-            if ( (a_old<a) .or. (b_old<b) ) then
-               allocate(profile_tmp(1:a_old,1:b_old,1:4))
-               profile_tmp(:,:,:) = Insect%wing_thickness_profile(:,:,:)
-               deallocate(Insect%wing_thickness_profile)
-               allocate(Insect%wing_thickness_profile(1:a,1:b,1:4))
-               Insect%wing_thickness_profile(1:a_old,1:b_old,1:4) = profile_tmp(:,:,:)
-               deallocate(profile_tmp)
-            endif
-         endif
-       case ("corrugation_profile")
-         if (.not.allocated(Insect%corrugation_profile)) then
-            allocate(Insect%corrugation_profile(1:a,1:b,1:4))
-         else
-            a_old = size(Insect%corrugation_profile,1)
-            b_old = size(Insect%corrugation_profile,2)
-            if ( (a_old<a) .or. (b_old<b) ) then
-               allocate(profile_tmp(1:a_old,1:b_old,1:4))
-               profile_tmp(:,:,:) = Insect%corrugation_profile(:,:,:)
-               deallocate(Insect%corrugation_profile)
-               allocate(Insect%corrugation_profile(1:a,1:b,1:4))
-               Insect%corrugation_profile(1:a_old,1:b_old,1:4) = profile_tmp(:,:,:)
-               deallocate(profile_tmp)
-            endif
-         endif
-       !KVN-2025>>>>>
-       ! NOTE: prescribed wing deformation is untested work in progress! -TE 02/2026
-       case ("deformations")
-         if (.not.allocated(Insect%deformations)) then
-            allocate(Insect%deformations(1:a,1:b,1:4))
-         else
-            a_old = size(Insect%deformations,1)
-            b_old = size(Insect%deformations,2)
-            if ( (a_old<a) .or. (b_old<b) ) then
-               allocate(profile_tmp(1:a_old,1:b_old,1:4))
-               profile_tmp(:,:,:) = Insect%deformations(:,:,:)
-               deallocate(Insect%deformations)
-               allocate(Insect%deformations(1:a,1:b,1:4))
-               Insect%deformations(1:a_old,1:b_old,1:4) = profile_tmp(:,:,:)
-               deallocate(profile_tmp)
-            endif
-         endif
-       case ("deformation_profile")
-         if (.not.allocated(Insect%deformation_profile)) then
-            allocate(Insect%deformation_profile(1:a,1:b,1:4))
-         else
-            a_old = size(Insect%deformation_profile,1)
-            b_old = size(Insect%deformation_profile,2)
-            if ( (a_old<a) .or. (b_old<b) ) then
-               allocate(profile_tmp(1:a_old,1:b_old,1:4))
-               profile_tmp(:,:,:) = Insect%deformation_profile(:,:,:)
-               deallocate(Insect%deformation_profile)
-               allocate(Insect%deformation_profile(1:a,1:b,1:4))
-               Insect%deformation_profile(1:a_old,1:b_old,1:4) = profile_tmp(:,:,:)
-               deallocate(profile_tmp)
-            endif
-         endif
-         !KVN-2025<<<<<
-       case ("damage_mask")
-         if (.not.allocated(Insect%damage_mask)) then
-            allocate(Insect%damage_mask(1:a,1:b,1:4))
-         else
-            a_old = size(Insect%damage_mask,1)
-            b_old = size(Insect%damage_mask,2)
-            if ( (a_old<a) .or. (b_old<b) ) then
-               allocate(profile_tmp(1:a_old,1:b_old,1:4))
-               profile_tmp(:,:,:) = Insect%damage_mask(:,:,:)
-               deallocate(Insect%damage_mask)
-               allocate(Insect%damage_mask(1:a,1:b,1:4))
-               Insect%damage_mask(1:a_old,1:b_old,1:4) = profile_tmp(:,:,:)
-               deallocate(profile_tmp)
-            endif
-         endif
-       case default
-      endselect
-
-   end subroutine Allocate_Arrays
 
    !> Wrapper to update all insects at once
    subroutine Update_All_Insects( time )
@@ -502,7 +393,6 @@ contains
       real(kind=rk), intent(in)   :: time
       type(diptera), intent(inout) :: Insect
 
-      logical, save :: first_call = .true.
       integer(kind=ik) :: i
       integer(kind=2) :: wingID
 
@@ -510,33 +400,33 @@ contains
       ! fetch current motion state
       !-----------------------------------------------------------------------------
       call BodyMotion (time, Insect)
-      wingID = 1
-      call FlappingMotionWrap (time, Insect, wingID)
-      wingID = 2
-      call FlappingMotionWrap (time, Insect, wingID)
 
-      if (Insect%second_wing_pair) then
-         wingID = 3
-         call FlappingMotionWrap (time, Insect, wingID)
-         wingID = 4
-         call FlappingMotionWrap (time, Insect, wingID)
-      endif
-      call StrokePlane (time, Insect)
+      ! update wing angles (alpha, phi, theta and their time derivatives for each wing)
+      do wingID = 1, 4
+         if (Insect%Wings(wingID)%used) then
+            call FlappingMotionWrap(time, Insect, wingID)
+         endif
+      enddo
 
       !-----------------------------------------------------------------------------
       ! define the rotation matrices to change between coordinate systems
       !-----------------------------------------------------------------------------
       call body_rotation_matrix( Insect, Insect%M_g2b )
-      call wing_rotation_matrix( Insect%M_b2w_l, Insect%alpha_l, Insect%theta_l, Insect%phi_l, Insect%eta_stroke, "left" )
-      call wing_rotation_matrix( Insect%M_b2w_r, Insect%alpha_r, Insect%theta_r, Insect%phi_r, Insect%eta_stroke, "right" )
-      if (Insect%second_wing_pair) then
-         call wing_rotation_matrix( Insect%M_b2w_l2, Insect%alpha_l2, Insect%theta_l2, Insect%phi_l2, Insect%eta_stroke, "left" )
-         call wing_rotation_matrix( Insect%M_b2w_r2, Insect%alpha_r2, Insect%theta_r2, Insect%phi_r2, Insect%eta_stroke, "right" )
-      endif
-
-      ! inverse of the body rotation matrices
+      ! inverse of the body rotation matrix
       Insect%M_b2g = transpose(Insect%M_g2b)
 
+      ! update wing rotation matrix for all wings that are used
+      do wingID = 1, 4
+         if (Insect%Wings(wingID)%used) then
+            call wing_rotation_matrix( Insect%Wings(wingID)%M_b2w, Insect%Wings(wingID)%alpha, &
+                                       Insect%Wings(wingID)%theta, Insect%Wings(wingID)%phi, &
+                                       Insect%eta_stroke, Insect%Wings(wingID)%side )
+         endif
+      enddo
+
+      !-----------------------------------------------------------------------------
+      ! Angular velocities & acceleration
+      !-----------------------------------------------------------------------------
       ! body angular velocity vector in b/g coordinate system
       call body_angular_velocity( Insect, Insect%rot_body_b, Insect%rot_body_g, Insect%M_g2b )
       ! rel+abs wing angular velocities in the w/b/g coordinate system
@@ -550,19 +440,11 @@ contains
       ! NOTE: this qty is used to compute aerody. moments in FLUSI, something odd happens and
       ! we need the relative vector. In wabbit, we need the absolute vector.
       !-----------------------------------------------------------------------------
-      Insect%x_pivot_l_g = matmul(Insect%M_b2g, Insect%x_pivot_l_b) + Insect%xc_body_g
-      Insect%x_pivot_r_g = matmul(Insect%M_b2g, Insect%x_pivot_r_b) + Insect%xc_body_g
-
-      if (Insect%second_wing_pair) then
-         Insect%x_pivot_l2_g = matmul(Insect%M_b2g, Insect%x_pivot_l2_b) + Insect%xc_body_g
-         Insect%x_pivot_r2_g = matmul(Insect%M_b2g, Insect%x_pivot_r2_b) + Insect%xc_body_g
-      endif
-
-      if (first_call) then
-         ! print some important numbers, routine exectuted only once during a simulation
-         !    call print_insect_reynolds_numbers( Insect ) ! ERROR: this can only be called after wing shape initialization
-         first_call = .false.
-      endif
+      do wingID = 1, 4
+         if (Insect%Wings(wingID)%used) then
+            Insect%Wings(wingID)%x_pivot_g = matmul(Insect%M_b2g, Insect%Wings(wingID)%x_pivot_b) + Insect%xc_body_g
+         endif
+      enddo
 
       ! save time to insect, then we can check if the update routine has been called
       ! or not (this is not necessary if Update_Insect is called, but helpful to prevent
@@ -677,26 +559,34 @@ contains
       endif
       if (.not. allocated(buffer_local)) allocate(buffer_local(1:n_entries*n_insects))
 
-      do i=1,n_insects
-         if (Insects(i)%second_wing_pair) then
-            buffer_local((i-1)*n_entries+1:i*n_entries) = (/Insects(i)%xc_body_g, Insects(i)%psi, Insects(i)%beta, &
-               Insects(i)%gamma, Insects(i)%eta_stroke, Insects(i)%alpha_l, Insects(i)%phi_l, &
-               Insects(i)%theta_l, Insects(i)%alpha_r, Insects(i)%phi_r, Insects(i)%theta_r, &
-               Insects(i)%rot_rel_wing_l_w, Insects(i)%rot_rel_wing_r_w, &
-               Insects(i)%rot_dt_wing_l_w, Insects(i)%rot_dt_wing_r_w, &
-               Insects(i)%alpha_l2, Insects(i)%phi_l2, Insects(i)%theta_l2, &
-               Insects(i)%alpha_r2, Insects(i)%phi_r2, Insects(i)%theta_r2, &
-               Insects(i)%rot_rel_wing_l2_w, Insects(i)%rot_rel_wing_r2_w, &
-               Insects(i)%rot_dt_wing_l2_w, Insects(i)%rot_dt_wing_r2_w /)
-         else
-            buffer_local((i-1)*n_entries+1:i*n_entries) = (/Insects(i)%xc_body_g, Insects(i)%psi, Insects(i)%beta, &
-               Insects(i)%gamma, Insects(i)%eta_stroke, Insects(i)%alpha_l, Insects(i)%phi_l, &
-               Insects(i)%theta_l, Insects(i)%alpha_r, Insects(i)%phi_r, Insects(i)%theta_r, &
-               Insects(i)%rot_rel_wing_l_w, Insects(i)%rot_rel_wing_r_w, &
-               Insects(i)%rot_dt_wing_l_w, Insects(i)%rot_dt_wing_r_w, &
-               0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk, &
-               0.0_rk, 0.0_rk, 0.0_rk, 0.0_rk /)
-         endif
+      do i = 1, n_insects
+         buffer_local((i-1)*n_entries+1:i*n_entries) = (/&
+                  Insects(i)%xc_body_g, &
+                  Insects(i)%psi, &
+                  Insects(i)%beta, &
+                  Insects(i)%gamma, &
+                  Insects(i)%eta_stroke, &
+                  Insects(i)%Wings(1)%alpha, & ! left
+                  Insects(i)%Wings(1)%phi, &
+                  Insects(i)%Wings(1)%theta, &
+                  Insects(i)%Wings(2)%alpha, & ! right
+                  Insects(i)%Wings(2)%phi, &
+                  Insects(i)%Wings(2)%theta, &
+                  Insects(i)%Wings(1)%rot_rel_wing_w, & ! left
+                  Insects(i)%Wings(2)%rot_rel_wing_w, & !right
+                  Insects(i)%Wings(1)%rot_dt_wing_w, & ! left
+                  Insects(i)%Wings(2)%rot_dt_wing_w, & ! right
+                  Insects(i)%Wings(3)%alpha, & ! left2
+                  Insects(i)%Wings(3)%phi, &
+                  Insects(i)%Wings(3)%theta, &
+                  Insects(i)%Wings(4)%alpha, & ! right2
+                  Insects(i)%Wings(4)%phi, &
+                  Insects(i)%Wings(4)%theta, &
+                  Insects(i)%Wings(3)%rot_rel_wing_w, & !L2
+                  Insects(i)%Wings(4)%rot_rel_wing_w, & !R2
+                  Insects(i)%Wings(3)%rot_dt_wing_w, & !L2
+                  Insects(i)%Wings(4)%rot_dt_wing_w & !R2
+            /)
       enddo
       call append_t_file( Insects(1)%kinematics_file, (/time, buffer_local(1:n_entries*n_insects) /) )
    end subroutine Write_insect_data
@@ -705,7 +595,7 @@ contains
    !-------------------------------------------------------------------------------
    ! Main routine for drawing insects. Draws body and wings, parameters are in "INSECT"
    !-------------------------------------------------------------------------------
-   subroutine Draw_Insect( time, Insect, xx0, ddx, mask, mask_color, us, delete )
+   subroutine Draw_Insect( time, Insect, xx0, ddx, mask, mask_color, us)
       implicit none
 
       real(kind=rk), intent(in)      :: time
@@ -714,61 +604,15 @@ contains
       real(kind=rk), intent(inout)   :: mask(0:,0:,0:)
       real(kind=rk), intent(inout)   :: us(0:,0:,0:,1:)
       real(kind=rk), intent(inout)   :: mask_color(0:,0:,0:)
-      logical, intent(in)            :: delete  !< delete old mask?
 
       if ((dabs(Insect%time-time)>1.0d-10).and.root) then
          write(*,'("error! time=",es15.8," but Insect%time=",es15.8)') time, Insect%time
          write(*,'("Did you call Update_Insect before Draw_Insect?")')
       endif
 
-      ! 28/01/2019: Thomas. Discovered that this was done block based, i.e. the smoothing layer
-      ! had different thickness, if some blocks happened to be at different levels (and still carry
-      ! a part of the smoothing layer.) I don't know if that made sense, because the layer shrinks/expands then
-      ! and because it might be discontinous. Both options are included now, default is "as before"
-      ! Insect%smoothing_thickness=="local"  : smoothing_layer = c_sm * 2**-J * L/(BS-1)
-      ! Insect%smoothing_thickness=="global" : smoothing_layer = c_sm * 2**-Jmax * L/(BS-1)
-      if (Insect%smoothing_thickness=="local") then
-         Insect%smooth = Insect%C_smooth*maxval(ddx)
-         if (Insect%smoothing_type == "hester") then
-            Insect%smooth = Insect%epsilon_hester
-            Insect%safety = max(5.0_rk*Insect%epsilon_hester, 2*maxval(ddx))
-        else
-            Insect%safety = 3.5_rk*Insect%smooth
-        end if
-      endif
 
-      ! delete old mask
-      if (delete) call delete_old_mask( time, mask, mask_color, us, Insect )
-
-      !-----------------------------------------------------------------------------
-      ! BODY. Now the body is special: if the insect does not move (or rotate), the
-      ! body does not change in time. On the other hand, it is quite expensive to
-      ! compute, since it involves a lot of points (volume), and it is a source of
-      ! load balancing problems, since many cores do not draw the body at all.
-      ! We thus try to draw it only once and then simply not to erase it later.
-      !-----------------------------------------------------------------------------
-      if (Insect%body_moves=="no" .and. .not. grid_time_dependent) then
-         if (.not. Insect%body_already_drawn) then
-            ! the body is at rest, but it is the first call to this routine, so draw it now
-            if (root) then
-               write(*,'(80("~"))')
-               write(*,*) "Flag Insect%body_moves is no and we did not yet draw"
-               write(*,*) "the body once: we do that now, and skip draw_insect_body"
-               write(*,*) "from now on. time=", time
-               write(*,'(80("~"))')
-            endif
-            call draw_insect_body( time, xx0, ddx, mask, mask_color, us, Insect, delete=.false.)
-            Insect%body_already_drawn = .true.
-         endif
-      else
-         ! the body moves, draw it
-         call draw_insect_body( time, xx0, ddx, mask, mask_color, us, Insect, delete=.false.)
-      endif
-
-      !-----------------------------------------------------------------------------
-      ! Wings
-      !-----------------------------------------------------------------------------
-      call draw_insect_wings( time, xx0, ddx, mask, mask_color, us, Insect, delete=.false.)
+      call draw_insect_body( time, xx0, ddx, mask, mask_color, us, Insect)
+      call draw_insect_wings( time, xx0, ddx, mask, mask_color, us, Insect)
 
       ! this is a debug test, which succeeded.
       !call check_if_us_is_derivative_of_position_wingtip(time, Insect)
@@ -858,9 +702,9 @@ contains
       type(diptera),intent(inout)::Insect
 
       ! colors for Diptera (one body, two wings)
-      color_body = 1  ! Insect%color_body
-      color_l = 2     ! Insect%color_l
-      color_r = 3     ! Insect%color_r
+      color_body = 1  ! NOT Insect%color_body
+      color_l = 2     ! NOT Insect%color_l
+      color_r = 3     ! NOT Insect%color_r
 
       ! body is not driven directly, therefore the power is set to zero
       Insect%PartIntegrals(color_body)%APow = 0.0_rk
@@ -869,12 +713,12 @@ contains
       ! left wing
       !-----------
       ! relative angular velocity, in global system
-      omrel = Insect%rot_rel_wing_l_g
+      omrel = Insect%Wings(1)%rot_rel_wing_g
 
       ! the aerodyn moment is computed in global system and readily w.r.t. insects hinge
       ! points (in statistics_ACM.f90)
       momrel = Insect%PartIntegrals(color_l)%Torque + &
-         Insect%PartIntegrals(color_l)%Torque_unst
+               Insect%PartIntegrals(color_l)%Torque_unst
 
       ! aerodynamic power
       Insect%PartIntegrals(color_l)%APow = - sum( momrel * omrel )
@@ -883,12 +727,12 @@ contains
       ! right wing
       !-----------
       ! relative angular velocity, in global system
-      omrel = Insect%rot_rel_wing_r_g
+      omrel = Insect%Wings(2)%rot_rel_wing_g
 
       ! the aerodyn moment is computed in global system and readily w.r.t. insects hinge
       ! points (in statistics_ACM.f90)
       momrel = Insect%PartIntegrals(color_r)%Torque + &
-         Insect%PartIntegrals(color_r)%Torque_unst
+               Insect%PartIntegrals(color_r)%Torque_unst
 
       ! aerodynamic power
       Insect%PartIntegrals(color_r)%APow = - sum( momrel * omrel )
@@ -897,40 +741,39 @@ contains
       ! Total aerodynamic power
       !-----------
       apowtotal = Insect%PartIntegrals(color_body)%APow + &
-         Insect%PartIntegrals(color_l)%APow + Insect%PartIntegrals(color_r)%APow
+                  Insect%PartIntegrals(color_l)%APow + &
+                  Insect%PartIntegrals(color_r)%APow
 
       !-----------
       ! if second wing pair is present
       !-----------
-      if (Insect%second_wing_pair) then
-         ! Colors
-         color_l2 = 4     ! Insect%color_l2
-         color_r2 = 5     ! Insect%color_r2
+      ! Colors
+      color_l2 = 4     ! NOT Insect%color_l2
+      color_r2 = 5     ! NOT Insect%color_r2
 
-         ! left wing
-         ! relative angular velocity, in global system
-         omrel = Insect%rot_rel_wing_l2_g
+      ! left wing
+      ! relative angular velocity, in global system
+      omrel = Insect%Wings(3)%rot_rel_wing_g
 
-         momrel = Insect%PartIntegrals(color_l2)%Torque + &
-            Insect%PartIntegrals(color_l2)%Torque_unst
+      momrel = Insect%PartIntegrals(color_l2)%Torque + &
+               Insect%PartIntegrals(color_l2)%Torque_unst
 
-         ! aerodynamic power
-         Insect%PartIntegrals(color_l2)%APow = - sum( momrel * omrel )
+      ! aerodynamic power
+      Insect%PartIntegrals(color_l2)%APow = - sum( momrel * omrel )
 
-         ! right wing
-         ! relative angular velocity, in global system
-         omrel = Insect%rot_rel_wing_r2_g
+      ! right wing
+      ! relative angular velocity, in global system
+      omrel = Insect%Wings(4)%rot_rel_wing_g
 
-         momrel = Insect%PartIntegrals(color_r2)%Torque + &
-            Insect%PartIntegrals(color_r2)%Torque_unst
+      momrel = Insect%PartIntegrals(color_r2)%Torque + &
+               Insect%PartIntegrals(color_r2)%Torque_unst
 
-         ! aerodynamic power
-         Insect%PartIntegrals(color_r2)%APow = - sum( momrel * omrel )
+      ! aerodynamic power
+      Insect%PartIntegrals(color_r2)%APow = - sum( momrel * omrel )
 
-         ! Total aerodynamic power
-         apowtotal = apowtotal + Insect%PartIntegrals(color_l2)%APow + &
-            Insect%PartIntegrals(color_r2)%APow
-      endif
+      ! Total aerodynamic power
+      apowtotal = apowtotal + Insect%PartIntegrals(color_l2)%APow + &
+                              Insect%PartIntegrals(color_r2)%APow
 
    end subroutine aero_power
 
@@ -973,101 +816,47 @@ contains
       real(kind=rk), dimension(1:3,1:5) :: iwmoment
       integer(kind=2) :: color_body, color_l, color_r, color_l2, color_r2
       type(diptera),intent(inout)::Insect
+      integer(kind=ik) :: wingID, color
 
-      iwmoment = 0
-      iwmoment_g = 0
+      iwmoment   = 0.0_rk
+      iwmoment_g = 0.0_rk
+      ipowtotal  = 0.0_rk
 
-      ! colors for Diptera (one body, two wings)
-      color_body = 1  ! Insect%color_body
-      color_l = 2     ! Insect%color_l
-      color_r = 3     ! Insect%color_r
+      ! colors for Diptera (one body, four wings) (yes, I know that diptera have only two wings.)
+      color_body = 1  ! NOT Insect%color_body
+      color_l = 2     ! NOT Insect%color_l
+      color_r = 3     ! NOT Insect%color_r
+      color_l2 = 4    ! NOT Insect%color_l2
+      color_r2 = 5    ! NOT Insect%color_r2
 
-      !-- LEFT WING
-      a(1) = Insect%Jxx * Insect%rot_dt_wing_l_w(1) + Insect%Jxy * Insect%rot_dt_wing_l_w(2)
-      a(2) = Insect%Jxy * Insect%rot_dt_wing_l_w(1) + Insect%Jyy * Insect%rot_dt_wing_l_w(2)
-      a(3) = Insect%Jzz * Insect%rot_dt_wing_l_w(3)
+      ! computation of inertial power and moment
+      do wingID = 1, 4
+         color = wingID+1
 
-      b(1) = Insect%Jxx * Insect%rot_rel_wing_l_w(1) + Insect%Jxy * Insect%rot_rel_wing_l_w(2)
-      b(2) = Insect%Jxy * Insect%rot_rel_wing_l_w(1) + Insect%Jyy * Insect%rot_rel_wing_l_w(2)
-      b(3) = Insect%Jzz * Insect%rot_rel_wing_l_w(3)
+         a(1) = Insect%Wings(wingID)%Jxx * Insect%Wings(wingID)%rot_dt_wing_w(1) + Insect%Wings(wingID)%Jxy * Insect%Wings(wingID)%rot_dt_wing_w(2)
+         a(2) = Insect%Wings(wingID)%Jxy * Insect%Wings(wingID)%rot_dt_wing_w(1) + Insect%Wings(wingID)%Jyy * Insect%Wings(wingID)%rot_dt_wing_w(2)
+         a(3) = Insect%Wings(wingID)%Jzz * Insect%Wings(wingID)%rot_dt_wing_w(3)
 
-      iwmoment(1,color_l) = (a(1)+Insect%rot_rel_wing_l_w(2)*b(3)-Insect%rot_rel_wing_l_w(3)*b(2))
-      iwmoment(2,color_l) = (a(2)+Insect%rot_rel_wing_l_w(3)*b(1)-Insect%rot_rel_wing_l_w(1)*b(3))
-      iwmoment(3,color_l) = (a(3)+Insect%rot_rel_wing_l_w(1)*b(2)-Insect%rot_rel_wing_l_w(2)*b(1))
+         b(1) = Insect%Wings(wingID)%Jxx * Insect%Wings(wingID)%rot_rel_wing_w(1) + Insect%Wings(wingID)%Jxy * Insect%Wings(wingID)%rot_rel_wing_w(2)
+         b(2) = Insect%Wings(wingID)%Jxy * Insect%Wings(wingID)%rot_rel_wing_w(1) + Insect%Wings(wingID)%Jyy * Insect%Wings(wingID)%rot_rel_wing_w(2)
+         b(3) = Insect%Wings(wingID)%Jzz * Insect%Wings(wingID)%rot_rel_wing_w(3)
 
-      Insect%PartIntegrals(color_l)%IPow = &
-         Insect%rot_rel_wing_l_w(1) * iwmoment(1,color_l) + &
-         Insect%rot_rel_wing_l_w(2) * iwmoment(2,color_l) + &
-         Insect%rot_rel_wing_l_w(3) * iwmoment(3,color_l)
+         ! inertial moment (in wing system)
+         iwmoment(1, color) = (a(1)+Insect%Wings(wingID)%rot_rel_wing_w(2)*b(3)-Insect%Wings(wingID)%rot_rel_wing_w(3)*b(2))
+         iwmoment(2, color) = (a(2)+Insect%Wings(wingID)%rot_rel_wing_w(3)*b(1)-Insect%Wings(wingID)%rot_rel_wing_w(1)*b(3))
+         iwmoment(3, color) = (a(3)+Insect%Wings(wingID)%rot_rel_wing_w(1)*b(2)-Insect%Wings(wingID)%rot_rel_wing_w(2)*b(1))
 
-      !-- RIGHT WING
-      a(1) = Insect%Jxx * Insect%rot_dt_wing_r_w(1) + Insect%Jxy * Insect%rot_dt_wing_r_w(2)
-      a(2) = Insect%Jxy * Insect%rot_dt_wing_r_w(1) + Insect%Jyy * Insect%rot_dt_wing_r_w(2)
-      a(3) = Insect%Jzz * Insect%rot_dt_wing_r_w(3)
+         ! transform inertial moment into the laboratory reference frame
+         iwmoment_g(:, color) = -matmul(Insect%M_b2g, matmul(transpose(Insect%Wings(wingID)%M_b2w), iwmoment(:,color)))
 
-      b(1) = Insect%Jxx * Insect%rot_rel_wing_r_w(1) + Insect%Jxy * Insect%rot_rel_wing_r_w(2)
-      b(2) = Insect%Jxy * Insect%rot_rel_wing_r_w(1) + Insect%Jyy * Insect%rot_rel_wing_r_w(2)
-      b(3) = Insect%Jzz * Insect%rot_rel_wing_r_w(3)
+         ! inertial power
+         Insect%PartIntegrals(color)%IPow = Insect%Wings(wingID)%rot_rel_wing_w(1) * iwmoment(1, color) + &
+                                            Insect%Wings(wingID)%rot_rel_wing_w(2) * iwmoment(2, color) + &
+                                            Insect%Wings(wingID)%rot_rel_wing_w(3) * iwmoment(3, color)
 
-      iwmoment(1,color_r) = (a(1)+Insect%rot_rel_wing_r_w(2)*b(3)-Insect%rot_rel_wing_r_w(3)*b(2))
-      iwmoment(2,color_r) = (a(2)+Insect%rot_rel_wing_r_w(3)*b(1)-Insect%rot_rel_wing_r_w(1)*b(3))
-      iwmoment(3,color_r) = (a(3)+Insect%rot_rel_wing_r_w(1)*b(2)-Insect%rot_rel_wing_r_w(2)*b(1))
+         ipowtotal = ipowtotal + Insect%PartIntegrals(color)%IPow
+      enddo
 
-      Insect%PartIntegrals(color_r)%IPow = &
-         Insect%rot_rel_wing_r_w(1) * iwmoment(1,color_r) + &
-         Insect%rot_rel_wing_r_w(2) * iwmoment(2,color_r) + &
-         Insect%rot_rel_wing_r_w(3) * iwmoment(3,color_r)
-
-      ipowtotal = Insect%PartIntegrals(color_r)%IPow + Insect%PartIntegrals(color_l)%IPow
-
-      !-----------
-      ! if second wing pair is present
-      !-----------
-      if (Insect%second_wing_pair) then
-         ! colors
-         color_l2 = 4     ! Insect%color_l2
-         color_r2 = 5     ! Insect%color_r2
-
-         ! second left wing
-         a(1) = Insect%Jxx2 * Insect%rot_dt_wing_l2_w(1) + Insect%Jxy2 * Insect%rot_dt_wing_l2_w(2)
-         a(2) = Insect%Jxy2 * Insect%rot_dt_wing_l2_w(1) + Insect%Jyy2 * Insect%rot_dt_wing_l2_w(2)
-         a(3) = Insect%Jzz2 * Insect%rot_dt_wing_l2_w(3)
-
-         b(1) = Insect%Jxx2 * Insect%rot_rel_wing_l2_w(1) + Insect%Jxy2 * Insect%rot_rel_wing_l2_w(2)
-         b(2) = Insect%Jxy2 * Insect%rot_rel_wing_l2_w(1) + Insect%Jyy2 * Insect%rot_rel_wing_l2_w(2)
-         b(3) = Insect%Jzz2 * Insect%rot_rel_wing_l2_w(3)
-
-         iwmoment(1,color_l2) = (a(1)+Insect%rot_rel_wing_l2_w(2)*b(3)-Insect%rot_rel_wing_l2_w(3)*b(2))
-         iwmoment(2,color_l2) = (a(2)+Insect%rot_rel_wing_l2_w(3)*b(1)-Insect%rot_rel_wing_l2_w(1)*b(3))
-         iwmoment(3,color_l2) = (a(3)+Insect%rot_rel_wing_l2_w(1)*b(2)-Insect%rot_rel_wing_l2_w(2)*b(1))
-
-         Insect%PartIntegrals(color_l2)%IPow = &
-            Insect%rot_rel_wing_l2_w(1) * iwmoment(1,color_l2) + &
-            Insect%rot_rel_wing_l2_w(2) * iwmoment(2,color_l2) + &
-            Insect%rot_rel_wing_l2_w(3) * iwmoment(3,color_l2)
-
-         ! second right wing
-         a(1) = Insect%Jxx2 * Insect%rot_dt_wing_r2_w(1) + Insect%Jxy2 * Insect%rot_dt_wing_r2_w(2)
-         a(2) = Insect%Jxy2 * Insect%rot_dt_wing_r2_w(1) + Insect%Jyy2 * Insect%rot_dt_wing_r2_w(2)
-         a(3) = Insect%Jzz2 * Insect%rot_dt_wing_r2_w(3)
-
-         b(1) = Insect%Jxx2 * Insect%rot_rel_wing_r2_w(1) + Insect%Jxy2 * Insect%rot_rel_wing_r2_w(2)
-         b(2) = Insect%Jxy2 * Insect%rot_rel_wing_r2_w(1) + Insect%Jyy2 * Insect%rot_rel_wing_r2_w(2)
-         b(3) = Insect%Jzz2 * Insect%rot_rel_wing_r2_w(3)
-
-         iwmoment(1,color_r2) = (a(1)+Insect%rot_rel_wing_r2_w(2)*b(3)-Insect%rot_rel_wing_r2_w(3)*b(2))
-         iwmoment(2,color_r2) = (a(2)+Insect%rot_rel_wing_r2_w(3)*b(1)-Insect%rot_rel_wing_r2_w(1)*b(3))
-         iwmoment(3,color_r2) = (a(3)+Insect%rot_rel_wing_r2_w(1)*b(2)-Insect%rot_rel_wing_r2_w(2)*b(1))
-
-         Insect%PartIntegrals(color_r2)%IPow = &
-            Insect%rot_rel_wing_r2_w(1) * iwmoment(1,color_r2) + &
-            Insect%rot_rel_wing_r2_w(2) * iwmoment(2,color_r2) + &
-            Insect%rot_rel_wing_r2_w(3) * iwmoment(3,color_r2)
-
-         ! total
-         ipowtotal = ipowtotal + Insect%PartIntegrals(color_r2)%IPow + &
-            Insect%PartIntegrals(color_l2)%IPow
-      endif
 
       ! TODO: calculate and include rot_dt_body_b in the insect module
       !-- BODY
@@ -1085,12 +874,6 @@ contains
 
       ! transform into the laboratory reference frame
       !iwmoment_g(:,color_b) = -matmul(Insect%M_b2g,iwmoment(:,color_b))
-      iwmoment_g(:,color_l) = -matmul(Insect%M_b2g,matmul(transpose(Insect%M_b2w_l),iwmoment(:,color_l)))
-      iwmoment_g(:,color_r) = -matmul(Insect%M_b2g,matmul(transpose(Insect%M_b2w_r),iwmoment(:,color_r)))
-      if (Insect%second_wing_pair) then
-         iwmoment_g(:,color_l2) = -matmul(Insect%M_b2g,matmul(transpose(Insect%M_b2w_l2),iwmoment(:,color_l2)))
-         iwmoment_g(:,color_r2) = -matmul(Insect%M_b2g,matmul(transpose(Insect%M_b2w_r2),iwmoment(:,color_r2)))
-      endif
 
    end subroutine inert_power
 
@@ -1134,12 +917,12 @@ contains
          ! variant (b)
          ! in global frame
          rot_body_g = (/ psi_dt*cos(beta)*cos(gamma)-beta_dt*sin(gamma) ,&
-            beta_dt*cos(gamma)+psi_dt*cos(beta)*sin(gamma) ,&
-            gamma_dt-psi_dt*sin(beta) /)
+                         beta_dt*cos(gamma)+psi_dt*cos(beta)*sin(gamma) ,&
+                         gamma_dt-psi_dt*sin(beta) /)
          ! in body frame
          rot_body_b = (/ psi_dt-gamma_dt*sin(beta) ,&
-            beta_dt*cos(psi)+gamma_dt*cos(beta)*sin(psi) ,&
-            gamma_dt*cos(beta)*cos(psi)-beta_dt*sin(psi) /)
+                         beta_dt*cos(psi)+gamma_dt*cos(beta)*sin(psi) ,&
+                         gamma_dt*cos(beta)*cos(psi)-beta_dt*sin(psi) /)
       endif
    end subroutine body_angular_velocity
 
@@ -1150,7 +933,7 @@ contains
 
       type(diptera), intent(inout) :: Insect
       real(kind=rk), intent(in) :: phi, alpha, theta, phi_dt, alpha_dt, theta_dt, eta_stroke
-      character(len=*), intent(in) :: side
+      character(len=1), intent(in) :: side
       real(kind=rk), dimension(1:3), intent(out) :: rot_rel_wing_w, rot_rel_wing_b, rot_rel_wing_g
 
       real(kind=rk), dimension(1:3,1:3) :: M_b2s, M_b2w, M_g2b
@@ -1160,19 +943,20 @@ contains
       call wing_rotation_matrix(M_b2w, alpha, theta, phi, eta_stroke, side)
       call body_rotation_matrix(Insect, M_g2b)
 
-      if (side == "left") then
+      if (side == "L") then
          ! direct definition in stroke reference frame (left)
          rot_wing_s = (/ phi_dt-sin(theta)*alpha_dt, &
-            cos(phi)*cos(theta)*alpha_dt-sin(phi)*theta_dt, &
-            sin(phi)*cos(theta)*alpha_dt+cos(phi)*theta_dt /)
+                         cos(phi)*cos(theta)*alpha_dt-sin(phi)*theta_dt, &
+                         sin(phi)*cos(theta)*alpha_dt+cos(phi)*theta_dt /)
 
-      elseif (side == 'right') then
+      elseif (side == 'R') then
          ! direct definition in stroke reference frame (right)
          rot_wing_s = (/ -phi_dt-sin(theta)*(-alpha_dt), &
-            cos(-phi)*cos(theta)*(-alpha_dt)-sin(-phi)*theta_dt, &
-            sin(-phi)*cos(theta)*(-alpha_dt)+cos(-phi)*theta_dt /)
+                         cos(-phi)*cos(theta)*(-alpha_dt)-sin(-phi)*theta_dt, &
+                         sin(-phi)*cos(theta)*(-alpha_dt)+cos(-phi)*theta_dt /)
       else
          ! left or right (left2 and right2 not accepted - just pass the different angles)
+         write(*,*) "1", side
          call abort(10710242, "insect_module: neither right nor left side ? how many sides does an insect have? seven!?")
 
       endif
@@ -1199,25 +983,19 @@ contains
 
       real(kind=rk), intent(in) :: time
       type(diptera), intent(inout) :: Insect
+      integer(kind=ik) :: wingID
 
-      call compute_wing_angular_velocity( Insect, Insect%phi_r, Insect%alpha_r, Insect%theta_r, Insect%phi_dt_r, &
-      Insect%alpha_dt_r, Insect%theta_dt_r, Insect%eta_stroke, 'right', Insect%rot_rel_wing_r_w, &
-      Insect%rot_rel_wing_r_b, Insect%rot_rel_wing_r_g)
 
-      call compute_wing_angular_velocity( Insect, Insect%phi_l, Insect%alpha_l, Insect%theta_l, Insect%phi_dt_l, &
-      Insect%alpha_dt_l, Insect%theta_dt_l, Insect%eta_stroke, 'left', Insect%rot_rel_wing_l_w, &
-      Insect%rot_rel_wing_l_b, Insect%rot_rel_wing_l_g)
+      do wingID = 1, 4
+         if (Insect%Wings(wingID)%used) then
+            call compute_wing_angular_velocity( Insect, Insect%Wings(wingID)%phi, Insect%Wings(wingID)%alpha, &
+                  Insect%Wings(wingID)%theta, Insect%Wings(wingID)%phi_dt, Insect%Wings(wingID)%alpha_dt, &
+                  Insect%Wings(wingID)%theta_dt, Insect%eta_stroke, Insect%Wings(wingID)%side, &
+                  Insect%Wings(wingID)%rot_rel_wing_w, Insect%Wings(wingID)%rot_rel_wing_b, &
+                  Insect%Wings(wingID)%rot_rel_wing_g)
+         endif
+      enddo
 
-      ! if second wing pair is present
-      if (Insect%second_wing_pair) then
-        call compute_wing_angular_velocity( Insect, Insect%phi_r2, Insect%alpha_r2, Insect%theta_r2, Insect%phi_dt_r2, &
-        Insect%alpha_dt_r2, Insect%theta_dt_r2, Insect%eta_stroke, 'right', Insect%rot_rel_wing_r2_w, &
-        Insect%rot_rel_wing_r2_b, Insect%rot_rel_wing_r2_g)
-  
-        call compute_wing_angular_velocity( Insect, Insect%phi_l2, Insect%alpha_l2, Insect%theta_l2, Insect%phi_dt_l2, &
-        Insect%alpha_dt_l2, Insect%theta_dt_l2, Insect%eta_stroke, 'left', Insect%rot_rel_wing_l2_w, &
-        Insect%rot_rel_wing_l2_b, Insect%rot_rel_wing_l2_g)
-      endif
    end subroutine update_all_wing_angular_velocities
 
 
@@ -1244,128 +1022,38 @@ contains
       ! Consider a new object that only copies parts that are necessary for the wing angular acceleration
       Insect2 = Insect
 
-      Insect%rot_dt_wing_l_w = 0.0_rk
-      Insect%rot_dt_wing_r_w = 0.0_rk
-
       ! fetch motion state at time+dt
-      call BodyMotion (time+dt, Insect2)
-      wingID = 1
-      call FlappingMotionWrap(time+dt, Insect2, wingID)
-      wingID = 2
-      call FlappingMotionWrap(time+dt, Insect2, wingID)
+      call BodyMotion( time+dt, Insect2 )
+      call body_rotation_matrix( Insect, M_g2b ) ! (time)
 
-      if (Insect%second_wing_pair) then
-         wingID = 3
-         call FlappingMotionWrap(time+dt, Insect2, wingID)
-         wingID = 4
-         call FlappingMotionWrap(time+dt, Insect2, wingID)
-      endif
-      call StrokePlane (time+dt, Insect2)
-      call body_rotation_matrix( Insect2, M_g2b )
-      call update_all_wing_angular_velocities ( time+dt, Insect2 )
+      do wingID = 1, 4
+         Insect%Wings(wingID)%rot_dt_wing_w = 0.0_rk
 
-!??????????????????????????????? why not Insect2 ???!??!
-!??????????????????????????????? why not Insect2 ???!??!
-!??????????????????????????????? why not Insect2 ???!??!
-!??????????????????????????????? why not Insect2 ???!??!
-!??????????????????????????????? why not Insect2 ???!??!
-!??????????????????????????????? why not Insect2 ???!??!
-      ! this is the current state:
-      call body_rotation_matrix( Insect, M_g2b )
-      call wing_rotation_matrix( M_b2w_l, Insect%alpha_l, Insect%theta_l, Insect%phi_l, Insect%eta_stroke, "left" )
-      call wing_rotation_matrix( M_b2w_r, Insect%alpha_r, Insect%theta_r, Insect%phi_r, Insect%eta_stroke, "right" )
-      if (Insect%second_wing_pair) then
-         call wing_rotation_matrix( M_b2w_l2, Insect%alpha_l2, Insect%theta_l2, Insect%phi_l2, Insect%eta_stroke, "left" )
-         call wing_rotation_matrix( M_b2w_r2, Insect%alpha_r2, Insect%theta_r2, Insect%phi_r2, Insect%eta_stroke, "right" )
-      endif
+         if (Insect%Wings(wingID)%used) then
+            ! get wing angles (time+dt)
+            call FlappingMotionWrap(time+dt, Insect2, wingID)
+            
+            ! and the angular velocity (time+dt)
+            call compute_wing_angular_velocity( Insect2, Insect2%Wings(wingID)%phi, Insect2%Wings(wingID)%alpha, &
+               Insect2%Wings(wingID)%theta, Insect2%Wings(wingID)%phi_dt, Insect2%Wings(wingID)%alpha_dt, &
+               Insect2%Wings(wingID)%theta_dt, Insect2%eta_stroke, Insect2%Wings(wingID)%side, &
+               Insect2%Wings(wingID)%rot_rel_wing_w, Insect2%Wings(wingID)%rot_rel_wing_b, &
+               Insect2%Wings(wingID)%rot_rel_wing_g)
 
-      ! use one-sided finite differences to derive the absolute angular velocity with
-      ! respect to time. Note in older code versions, this was wrong, as we derived
-      ! the ang. vel. in the wing coordinate system, which is a moving reference frame.
+            ! angular accel using one-sided finite difference
+            ! use one-sided finite differences to derive the absolute angular velocity with
+            ! respect to time. Note in older code versions, this was wrong, as we derived
+            ! the ang. vel. in the wing coordinate system, which is a moving reference frame.
+            rot_dt_wing_g = (Insect2%Wings(wingID)%rot_rel_wing_g - Insect%Wings(wingID)%rot_rel_wing_g) / dt
 
-      ! now happily, the old results are still correct, as long as the body does not rotate
-      ! see, e.g., this document https://www.google.de/url?sa=t&rct=j&q=&esrc=s&source=web&cd=3&ved=0ahUKEwjzl-XP6_LNAhWoC5oKHUdDCHwQFggoMAI&url=http%3A%2F%2Focw.mit.edu%2Fcourses%2Faeronautics-and-astronautics%2F16-07-dynamics-fall-2009%2Flecture-notes%2FMIT16_07F09_Lec08.pdf&usg=AFQjCNHzEB-n_NMm6K3J1eRpIaGnuKpW0Q&sig2=yEPNin3bL5DnWauNJk2hcw&bvm=bv.126993452,d.bGs&cad=rjt
-      ! however, if the body moves, an additional term occurs, and this was indeed missing
-      ! in previous results.
-      rot_dt_wing_g = (Insect2%rot_rel_wing_l_g - Insect%rot_rel_wing_l_g) / dt
-      Insect%rot_dt_wing_l_w = matmul(M_b2w_l,matmul(M_g2b, rot_dt_wing_g))
-
-      rot_dt_wing_g = (Insect2%rot_rel_wing_r_g - Insect%rot_rel_wing_r_g) / dt
-      Insect%rot_dt_wing_r_w = matmul(M_b2w_r,matmul(M_g2b, rot_dt_wing_g))
-
-      ! if second wing pair is present
-      if (Insect%second_wing_pair) then
-         rot_dt_wing_g = (Insect2%rot_rel_wing_l2_g - Insect%rot_rel_wing_l2_g) / dt
-         Insect%rot_dt_wing_l2_w = matmul(M_b2w_l2,matmul(M_g2b, rot_dt_wing_g))
-
-         rot_dt_wing_g = (Insect2%rot_rel_wing_r2_g - Insect%rot_rel_wing_r2_g) / dt
-         Insect%rot_dt_wing_r2_w = matmul(M_b2w_r2,matmul(M_g2b, rot_dt_wing_g))
-      endif
+            ! angular accel in wing frame
+            Insect%Wings(wingID)%rot_dt_wing_w = matmul( Insect%Wings(wingID)%M_b2w, matmul( M_g2b, rot_dt_wing_g))
+         endif
+      enddo
 
       ! just to be sure, we deallocate insect2 here
-      call insect_clean(insect2)
-
+      call clean_insect(insect2)
    end subroutine wing_angular_accel
-
-
-   !> Delete the mask of the insect from the previous time step.
-   !! This routine first checks for the colors of the insects and deletes the mask where encessary
-   subroutine delete_old_mask( time, mask, mask_color, us, Insect )
-      implicit none
-
-      real(kind=rk), intent(in) :: time
-      type(diptera),intent(in) :: Insect
-      real(kind=rk),intent(inout) :: mask(0:,0:,0:)
-      real(kind=rk),intent(inout) :: us(0:,0:,0:,1:)
-      real(kind=rk),intent(inout) :: mask_color(0:,0:,0:)
-      integer(kind=2) :: color_body, color_l, color_r, color_l2, color_r2
-      logical, save :: cleaned_already_once = .false.
-
-      ! colors for Diptera (one body, two wings)
-      color_body = Insect%color_body
-      color_l = Insect%color_l
-      color_r = Insect%color_r
-      color_l2 = Insect%color_l2
-      color_r2 = Insect%color_r2
-
-      !-----------------------------------------------------------------------------
-      ! delete old mask
-      !-----------------------------------------------------------------------------
-      if (Insect%body_moves=="no" .and. .not. grid_time_dependent .and. cleaned_already_once) then
-         ! the body is at rest, so we will not draw it. Delete the wings, as they move.
-         ! real comparison should usually be done with a tolerance, but since we only ever set color values and do no arithmetics, this is fine
-         where (mask_color==dble(color_l) .or. mask_color==dble(color_r) .or. &
-            mask_color==dble(color_l2) .or. mask_color==dble(color_r2))
-            mask = 0.0_rk
-            mask_color = 0
-         end where
-         ! as the body rests it has no solid body velocity, which means we can safely
-         ! reset the velocity everywhere (this step is actually unnessesary, but for
-         ! safety we do it as well)
-         ! real comparison should usually be done with a tolerance, but since we only ever set color values and do no arithmetics, this is fine
-         where (mask_color==dble(color_body) .or. mask_color==dble(color_l) .or. mask_color==dble(color_r) .or. &
-            mask_color==dble(color_l2) .or. mask_color==dble(color_r2))
-            us(:,:,:,1) = 0.0_rk
-            us(:,:,:,2) = 0.0_rk
-            us(:,:,:,3) = 0.0_rk
-         end where
-      else
-         ! the body of the insect moves, so we will construct the entire insect in this
-         ! (and any other) call, we need to reset the mask of the insect only
-         ! real comparison should usually be done with a tolerance, but since we only ever set color values and do no arithmetics, this is fine
-         where (mask_color==dble(color_body) .or. mask_color==dble(color_l) .or. mask_color==dble(color_r) .or. &
-            mask_color==dble(color_l2) .or. mask_color==dble(color_r2))
-            mask = 0.0_rk
-            mask_color = 0
-            us(:,:,:,1) = 0.0_rk
-            us(:,:,:,2) = 0.0_rk
-            us(:,:,:,3) = 0.0_rk
-         end where
-      endif
-
-      cleaned_already_once = .true.
-
-   end subroutine delete_old_mask
 
 
    !-----------------------------------------------------------------------------
@@ -1396,7 +1084,7 @@ contains
 
 
    !-----------------------------------------------------------------------------
-   ! returns the stroke rotation matrix M_b2s for a given wing
+   ! returns the stroke rotation matrix M_b2s for a given side
    !-----------------------------------------------------------------------------
    subroutine stroke_rotation_matrix( M_b2s, eta_stroke, side )
       implicit none
@@ -1404,20 +1092,21 @@ contains
       real(kind=rk),intent(out) :: M_b2s(1:3,1:3)
       real(kind=rk), intent(in) :: eta_stroke
       ! as this is called rarely okay to use string comparison
-      character(len=*), intent(in) :: side ! left or right (left2 and right2 not accepted - just pass the different angles)
+      character(len=1), intent(in) :: side ! left or right (left2 and right2 not accepted - just pass the different angles)
       real(kind=rk), dimension(1:3,1:3) :: M1, M2
 
 
-      if (side == "right") then
+      if (side == "R") then
          call Rx(M1, pi)
          call Ry(M2, eta_stroke)
          M_b2s = matmul(M1,M2)
 
-      elseif (side == "left") then
+      elseif (side == "L") then
          call Ry(M1, eta_stroke)
          M_b2s = M1
 
       else
+         write(*,*) "2", side
          ! left or right (left2 and right2 not accepted - just pass the different angles)
          call abort(1071024, "insect_module: neither right nor left side ? how many sides does an insect have? seven!?")
 
@@ -1426,7 +1115,7 @@ contains
 
 
    !-----------------------------------------------------------------------------
-   ! returns the wing rotation matrix M_b2w for a given wing
+   ! returns the wing rotation matrix M_b2w for a given side
    !-----------------------------------------------------------------------------
    subroutine wing_rotation_matrix( M_b2w, alpha, theta, phi, eta_stroke, side )
       implicit none
@@ -1434,12 +1123,12 @@ contains
       real(kind=rk),intent(out) :: M_b2w(1:3,1:3)
       real(kind=rk), intent(in) :: alpha, theta, phi, eta_stroke
       ! as this is called rarely okay to use string comparison
-      character(len=*), intent(in) :: side ! left or right (left2 and right2 not accepted - just pass the different angles)
+      character(len=1), intent(in) :: side ! L or R (left2 and right2 not accepted - just pass the different angles)
       real(kind=rk), dimension(1:3,1:3) :: M1, M2, M3, M_b2s
 
       call stroke_rotation_matrix(M_b2s, eta_stroke, side)
 
-      if (side == "right") then
+      if (side == "R") then
          ! note the coordinate system is rotated so we don't need to inverse the sign
          ! of theta, and the wings still rotate in opposite direction
          call Ry(M1, -alpha)
@@ -1447,81 +1136,19 @@ contains
          call Rx(M3, -phi)
          M_b2w = matmul(M1,matmul(M2,matmul(M3,M_b2s)))
 
-      elseif (side == "left") then
+      elseif (side == "L") then
          call Ry(M1, alpha)
          call Rz(M2, theta)
          call Rx(M3, phi)
          M_b2w = matmul(M1,matmul(M2,matmul(M3,M_b2s)))
 
       else
+         write(*,*) "3", side
          ! left or right (left2 and right2 not accepted - just pass the different angles)
          call abort(1071024, "insect_module: neither right nor left side ? how many sides does an insect have? seven!?")
 
       endif
    end subroutine wing_rotation_matrix
-
-
-   !-----------------------------------------------------------------------------
-   ! Compute and print a couple of important numbers for insects
-   !-----------------------------------------------------------------------------
-   subroutine  print_insect_reynolds_numbers( Insect )
-      implicit none
-      type(diptera),intent(inout) :: Insect
-      !type(diptera) :: Insect_copy ! commented out due to segmentation problems
-      real(kind=rk) :: area, Re_f, Re
-      real(kind=rk) :: time, dt
-      real(kind=rk) :: phil_min, phil_max, phir_min, phir_max
-      logical, save :: first_call = .true.
-      integer(kind=2) :: wingID
-
-      ! the second call is just a return statement
-      if ( first_call .eqv. .false.) return
-
-      ! only root does this...
-      if (root) then
-         ! we need the wing area to compute the mean wing chord
-         wingID = 1 ! use the left wing area (wingID=1)
-         call compute_wing_surface(Insect, wingID, area)
-         write(*,'(50("~"))')
-         write(*,'("Wing area is A=",g15.8)') area
-         write(*,'("Mean chord length is c_m=",g15.8)') area/1._rk ! note c_m = A/R but R=1
-
-         ! first we compute the stroke amplitude of the positional angle phi (for
-         ! both wings). for safety, we make a copy of the insect, since the routines
-         ! for the flapping motion write to this object, and we want to prevent any
-         ! unwanted side effects
-         !Insect_copy = Insect ! save the insect state
-         time = 0.0_rk
-         dt = 1.0d-3
-         phil_min = 0.0_rk
-         phil_max = 0.0_rk
-         phir_min = 0.0_rk
-         phir_max = 0.0_rk
-         ! we use only one stroke ( the first one )
-         do while (time < 1._rk)
-            wingID = 1
-            call FlappingMotionWrap ( time, Insect, wingID )
-!!          call FlappingMotionWrap ( time, Insect_copy, wingID )
-            wingID = 2
-            call FlappingMotionWrap ( time, Insect, wingID )
-!!          call FlappingMotionWrap ( time, Insect_copy, wingID )
-            phil_min = min( phil_min, Insect%phi_l )
-            phil_max = max( phil_max, Insect%phi_l )
-            phir_min = min( phir_min, Insect%phi_r )
-            phir_max = max( phir_max, Insect%phi_r )
-            time = time + dt
-         end do
-         write(*,'("All following quantities are based on the first stroke 0.0 <= t <= 1.0")')
-         write(*,'("Stroke amplitude is PHI_L=",g15.8)') abs(phil_max) + abs(phil_min)
-         write(*,'("Stroke amplitude is PHI_R=",g15.8)') abs(phir_max) + abs(phir_min)
-         write(*,'("Re_left  = 2*phi*R*f*c_m / nu =",g15.8)') 2._rk*(abs(phil_max)+abs(phil_min))*1._rk*1._rk*area/nu
-         write(*,'("Re_right = 2*phi*R*f*c_m / nu =",g15.8)') 2._rk*(abs(phir_max)+abs(phir_min))*1._rk*1._rk*area/nu
-         write(*,'("Re_f = R*R*f / nu =",g15.8)') 1._rk/nu
-         write(*,'(50("~"))')
-      endif
-
-      first_call = .false.
-   end subroutine print_insect_reynolds_numbers
 
 
    !-----------------------------------------------------------------------------
@@ -1575,56 +1202,56 @@ contains
    ! one we compute the global position vector (which we derive wrt time in postprocessing)
    ! and once the cross-products of rotation ang velocities as it is done in the actual code.
    ! we checked: both agree, also with imposed body velocity.
-   subroutine check_if_us_is_derivative_of_position_wingtip(time, Insect)
-      real(kind=rk), intent(in) :: time
-      type(diptera), intent(inout) :: Insect
+   ! subroutine check_if_us_is_derivative_of_position_wingtip(time, Insect)
+   !    real(kind=rk), intent(in) :: time
+   !    type(diptera), intent(inout) :: Insect
 
-      real(kind=rk) :: M_g2b(1:3,1:3), M_b2w_r(1:3,1:3), x_tip_w(1:3), x_tip_b(1:3), x_tip_g(1:3), &
-         us_tip_g(1:3), v_tmp(1:3), v_tmp_b(1:3)
-      real(kind=rk)::xd,yd,zd
-      real(kind=rk)::c00,c10,c01,c11,c0,c1
-      integer :: ix,iy,iz
+   !    real(kind=rk) :: M_g2b(1:3,1:3), M_b2w_r(1:3,1:3), x_tip_w(1:3), x_tip_b(1:3), x_tip_g(1:3), &
+   !       us_tip_g(1:3), v_tmp(1:3), v_tmp_b(1:3)
+   !    real(kind=rk)::xd,yd,zd
+   !    real(kind=rk)::c00,c10,c01,c11,c0,c1
+   !    integer :: ix,iy,iz
 
-      call body_rotation_matrix( Insect, M_g2b )
-      ! call wing_right_rotation_matrix( Insect, M_b2w_r )
-      call wing_rotation_matrix( M_b2w_r, Insect%alpha_r, Insect%theta_r, Insect%phi_r, Insect%eta_stroke, "right" )
-      ! body angular velocity vector in b/g coordinate system
-      call body_angular_velocity( Insect, Insect%rot_body_b, Insect%rot_body_g, M_g2b )
-      ! rel+abs wing angular velocities in the w/b/g coordinate system
-      call update_all_wing_angular_velocities ( time, Insect )
+   !    call body_rotation_matrix( Insect, M_g2b )
+   !    ! call wing_right_rotation_matrix( Insect, M_b2w_r )
+   !    call wing_rotation_matrix( M_b2w_r, Insect%alpha_r, Insect%theta_r, Insect%phi_r, Insect%eta_stroke, "right" )
+   !    ! body angular velocity vector in b/g coordinate system
+   !    call body_angular_velocity( Insect, Insect%rot_body_b, Insect%rot_body_g, M_g2b )
+   !    ! rel+abs wing angular velocities in the w/b/g coordinate system
+   !    call update_all_wing_angular_velocities ( time, Insect )
 
-      x_tip_w = (/ 1.0_rk, 1.0_rk, 1.0_rk /)
-      x_tip_b = matmul( transpose(M_b2w_r), x_tip_w ) + Insect%x_pivot_r_b
-      x_tip_g = matmul( transpose(M_g2b), x_tip_b ) + Insect%xc_body_g
+   !    x_tip_w = (/ 1.0_rk, 1.0_rk, 1.0_rk /)
+   !    x_tip_b = matmul( transpose(M_b2w_r), x_tip_w ) + Insect%Wings(2)%x_pivot_b
+   !    x_tip_g = matmul( transpose(M_g2b), x_tip_b ) + Insect%xc_body_g
 
-      !-----------------------------------------------------------------------------
-      ! now we extrcat how the us field is constructed
-      v_tmp(1) = Insect%rot_rel_wing_r_w(2)*x_tip_w(3)-Insect%rot_rel_wing_r_w(3)*x_tip_w(2)
-      v_tmp(2) = Insect%rot_rel_wing_r_w(3)*x_tip_w(1)-Insect%rot_rel_wing_r_w(1)*x_tip_w(3)
-      v_tmp(3) = Insect%rot_rel_wing_r_w(1)*x_tip_w(2)-Insect%rot_rel_wing_r_w(2)*x_tip_w(1)
-      v_tmp_b = matmul(transpose(M_b2w_r), v_tmp) ! in body system
+   !    !-----------------------------------------------------------------------------
+   !    ! now we extrcat how the us field is constructed
+   !    v_tmp(1) = Insect%rot_rel_wing_r_w(2)*x_tip_w(3)-Insect%rot_rel_wing_r_w(3)*x_tip_w(2)
+   !    v_tmp(2) = Insect%rot_rel_wing_r_w(3)*x_tip_w(1)-Insect%rot_rel_wing_r_w(1)*x_tip_w(3)
+   !    v_tmp(3) = Insect%rot_rel_wing_r_w(1)*x_tip_w(2)-Insect%rot_rel_wing_r_w(2)*x_tip_w(1)
+   !    v_tmp_b = matmul(transpose(M_b2w_r), v_tmp) ! in body system
 
 
-      ! translational part. we compute the rotational part in the body
-      ! reference frame, therefore, we must transform the body translation
-      ! velocity Insect%vc (which is in global coordinates) to the body frame
-      v_tmp = matmul(M_g2b,Insect%vc_body_g)
+   !    ! translational part. we compute the rotational part in the body
+   !    ! reference frame, therefore, we must transform the body translation
+   !    ! velocity Insect%vc (which is in global coordinates) to the body frame
+   !    v_tmp = matmul(M_g2b,Insect%vc_body_g)
 
-      ! add solid body rotation to the translational velocity field. Note
-      ! that rot_body_b and x_body are in the body reference frame
-      v_tmp(1) = v_tmp(1) + Insect%rot_body_b(2)*x_tip_b(3)-Insect%rot_body_b(3)*x_tip_b(2)
-      v_tmp(2) = v_tmp(2) + Insect%rot_body_b(3)*x_tip_b(1)-Insect%rot_body_b(1)*x_tip_b(3)
-      v_tmp(3) = v_tmp(3) + Insect%rot_body_b(1)*x_tip_b(2)-Insect%rot_body_b(2)*x_tip_b(1)
+   !    ! add solid body rotation to the translational velocity field. Note
+   !    ! that rot_body_b and x_body are in the body reference frame
+   !    v_tmp(1) = v_tmp(1) + Insect%rot_body_b(2)*x_tip_b(3)-Insect%rot_body_b(3)*x_tip_b(2)
+   !    v_tmp(2) = v_tmp(2) + Insect%rot_body_b(3)*x_tip_b(1)-Insect%rot_body_b(1)*x_tip_b(3)
+   !    v_tmp(3) = v_tmp(3) + Insect%rot_body_b(1)*x_tip_b(2)-Insect%rot_body_b(2)*x_tip_b(1)
 
-      ! the body motion is added to the wing motion, which is already in us
-      ! and they are also in the body refrence frame. However, us has to be
-      ! in the global reference frame, so M_b2g is applied
-      us_tip_g = matmul( transpose(M_g2b), v_tmp_b + v_tmp )
+   !    ! the body motion is added to the wing motion, which is already in us
+   !    ! and they are also in the body refrence frame. However, us has to be
+   !    ! in the global reference frame, so M_b2g is applied
+   !    us_tip_g = matmul( transpose(M_g2b), v_tmp_b + v_tmp )
 
-      open(14,file='debug_wing_us.t',status='unknown',position='append')
-      write (14,'(7(es15.8,1x))') time, x_tip_g, us_tip_g
-      close(14)
+   !    open(14,file='debug_wing_us.t',status='unknown',position='append')
+   !    write (14,'(7(es15.8,1x))') time, x_tip_g, us_tip_g
+   !    close(14)
 
-   end subroutine
+   ! end subroutine
 
 end module module_insects

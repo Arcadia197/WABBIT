@@ -38,7 +38,5 @@ implicit none
 
     real(kind=rk) :: x0, y0, z0
 
-    logical, parameter :: grid_time_dependent = .true.
-
     integer, parameter :: pr = rk
 end module module_insects_integration_flusi_wabbit

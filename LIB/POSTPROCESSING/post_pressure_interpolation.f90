@@ -175,7 +175,7 @@ subroutine post_pressure_interpolation(params)
                 end if
 
                 ! then bring it to body system
-                x_wing_b = matmul( transpose(Insects(1)%M_b2w_r), x_wing_w ) + Insects(1)%x_pivot_r_b
+                x_wing_b = matmul( transpose(Insects(1)%Wings(2)%M_b2w), x_wing_w ) + Insects(1)%Wings(2)%x_pivot_b
                 ! and finnaly to global system
                 x_wing_g = matmul( transpose(Insects(1)%M_g2b), x_wing_b ) + Insects(1)%xc_body_g
                 ! save point on the wing now in global system
@@ -200,7 +200,7 @@ subroutine post_pressure_interpolation(params)
                 end if
 
                 ! then bring it to body system
-                x_wing_b = matmul( transpose(Insects(1)%M_b2w_l), x_wing_w ) + Insects(1)%x_pivot_l_b
+                x_wing_b = matmul( transpose(Insects(1)%Wings(1)%M_b2w), x_wing_w ) + Insects(1)%Wings(1)%x_pivot_b
                 ! and finnaly to global system
                 x_wing_g = matmul( transpose(Insects(1)%M_g2b), x_wing_b ) + Insects(1)%xc_body_g
                 ! save point on the wing now in global system
