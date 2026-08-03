@@ -1320,7 +1320,7 @@ function scalar_product_two_trees( params, hvy_block, hvy_tmp ,&
     Jmax = params%Jmax
     g = params%g
     Bs= params%Bs
-    Volume = product(params%domain_size(1:params%dim))
+    Volume = product(params%domain_size(1:params%dim) * (params%domain_slice_max(1:params%dim) - params%domain_slice_min(1:params%dim)))
 
     ! depending on the predictor order, i.e. the order of the lagrange interpolation
     ! scheme. we have to use a different "FEM" Mass matrices. See:
@@ -1531,7 +1531,7 @@ function scalar_product_two_trees_old( params, hvy_block, hvy_tmp, &
     Jmax = params%Jmax
     g = params%g
     Bs= params%Bs
-    Volume = product(params%domain_size(1:params%dim))
+    Volume = product(params%domain_size(1:params%dim) * (params%domain_slice_max(1:params%dim) - params%domain_slice_min(1:params%dim)))
 
     !----------------------------------------------
     ! sprod = <X_i, X_j>

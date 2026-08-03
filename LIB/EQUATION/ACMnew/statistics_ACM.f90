@@ -408,14 +408,14 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
 
         ! mean flow (in entire domain)
         call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%mean_flow, 3, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
-        params_acm%mean_flow = params_acm%mean_flow / product(params_acm%domain_size(1:params_acm%dim))
+        params_acm%mean_flow = params_acm%mean_flow / product(params_acm%domain_size(1:params_acm%dim) * (params_acm%domain_slice_max(1:params_acm%dim) - params_acm%domain_slice_min(1:params_acm%dim)))
 
         if (params_acm%use_channel_forcing) then
             ! mean flow but only in fluid domain
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%meanflow_channel, 3, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
 
 			! analytically compute the volume of our channel (no numerical integration required, simple multiplication)
-            V_channel = params_acm%domain_size(1)*params_acm%domain_size(3)*(params_acm%domain_size(2)-2.0_rk*params_acm%h_channel)
+            V_channel = params_acm%domain_size(1)*params_acm%domain_size(3)*(params_acm%domain_size(2)-2.0_rk*params_acm%h_channel)*(params_acm%domain_slice_max(1) - params_acm%domain_slice_min(1))*(params_acm%domain_slice_max(2) - params_acm%domain_slice_min(2))
             params_acm%meanflow_channel = params_acm%meanflow_channel / V_channel
         endif
 
@@ -483,7 +483,7 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
         ! time statistics
         if (params_acm%time_statistics) then
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%time_statistics_mean, params_acm%n_time_statistics, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
-            params_acm%time_statistics_mean = params_acm%time_statistics_mean / product(params_acm%domain_size(1:params_acm%dim))
+            params_acm%time_statistics_mean = params_acm%time_statistics_mean / product(params_acm%domain_size(1:params_acm%dim) * (params_acm%domain_slice_max(1:params_acm%dim) - params_acm%domain_slice_min(1:params_acm%dim)))
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%time_statistics_maxabs, params_acm%n_time_statistics, MPI_DOUBLE_PRECISION, MPI_MAX, WABBIT_COMM, mpierr)
         endif
 
@@ -639,9 +639,9 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
             ! turbulent statistics - these are normed by the volume!
             if (params_acm%nu*params_acm%enstrophy > 0.0_rk .and. params_acm%HIT_linear_forcing) then
                 ! dissipation = 2*params_acm%nu*params_acm%enstrophy/product(params_acm%domain_size(1:params_acm%dim))
-                dissipation = params_acm%dissipation/product(params_acm%domain_size(1:params_acm%dim))
-                u_RMS = sqrt(2*params_acm%e_kin/product(params_acm%domain_size(1:params_acm%dim))/3)
-                call append_t_file( 'turbulent_statistics.t', (/time, dissipation, params_acm%e_kin/product(params_acm%domain_size(1:params_acm%dim)), u_RMS, &
+                dissipation = params_acm%dissipation/product(params_acm%domain_size(1:params_acm%dim) * (params_acm%domain_slice_max(1:params_acm%dim) - params_acm%domain_slice_min(1:params_acm%dim)))
+                u_RMS = sqrt(2*params_acm%e_kin/product(params_acm%domain_size(1:params_acm%dim) * (params_acm%domain_slice_max(1:params_acm%dim) - params_acm%domain_slice_min(1:params_acm%dim)))/3)
+                call append_t_file( 'turbulent_statistics.t', (/time, dissipation, params_acm%e_kin/product(params_acm%domain_size(1:params_acm%dim) * (params_acm%domain_slice_max(1:params_acm%dim) - params_acm%domain_slice_min(1:params_acm%dim))), u_RMS, &
                     (params_acm%nu**3.0_rk / dissipation)**0.25_rk, sqrt(params_acm%nu/dissipation), (params_acm%nu*dissipation)**0.25_rk, &
                     sqrt(15.0_rk*params_acm%nu*u_RMS**2/dissipation), sqrt(15.0_rk*params_acm%nu*u_RMS**2/dissipation)*u_RMS/params_acm%nu/))
             endif

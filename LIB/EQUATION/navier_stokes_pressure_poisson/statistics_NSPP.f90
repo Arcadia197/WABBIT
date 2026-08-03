@@ -376,13 +376,13 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
 
         ! mean flow (in entire domain)
         call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%mean_flow, 3, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
-        params_nspp%mean_flow = params_nspp%mean_flow / product(params_nspp%domain_size(1:params_nspp%dim))
+        params_nspp%mean_flow = params_nspp%mean_flow / product(params_nspp%domain_size(1:params_nspp%dim) * (params_nspp%domain_slice_max(1:params_nspp%dim) - params_nspp%domain_slice_min(1:params_nspp%dim)))
 
         if (params_nspp%use_channel_forcing) then
             ! mean flow but only in fluid domain
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%meanflow_channel, 3, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
 
-            V_channel = params_nspp%domain_size(1)*params_nspp%domain_size(3)*(params_nspp%domain_size(2)-2.0_rk*params_nspp%h_channel)
+            V_channel = params_nspp%domain_size(1)*params_nspp%domain_size(3)*(params_nspp%domain_size(2)-2.0_rk*params_nspp%h_channel)*(params_nspp%domain_slice_max(1) - params_nspp%domain_slice_min(1))*(params_nspp%domain_slice_max(2) - params_nspp%domain_slice_min(2))
             params_nspp%meanflow_channel = params_nspp%meanflow_channel / V_channel
         endif
 
@@ -436,7 +436,7 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
         ! time statistics
         if (params_nspp%time_statistics) then
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%time_statistics_mean, params_nspp%n_time_statistics, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
-            params_nspp%time_statistics_mean = params_nspp%time_statistics_mean / product(params_nspp%domain_size(1:params_nspp%dim))
+            params_nspp%time_statistics_mean = params_nspp%time_statistics_mean / product(params_nspp%domain_size(1:params_nspp%dim) * (params_nspp%domain_slice_max(1:params_nspp%dim) - params_nspp%domain_slice_min(1:params_nspp%dim)))
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%time_statistics_maxabs, params_nspp%n_time_statistics, MPI_DOUBLE_PRECISION, MPI_MAX, WABBIT_COMM, mpierr)
         endif
 
@@ -583,9 +583,9 @@ subroutine STATISTICS_NSPP( time, dt, u, g, x0, dx, stage, work, mask )
             ! turbulent statistics - these are normed by the volume!
             if (params_nspp%nu*params_nspp%enstrophy > 0.0_rk .and. params_nspp%HIT_linear_forcing) then
                 ! dissipation = 2*params_nspp%nu*params_nspp%enstrophy/product(params_nspp%domain_size(1:params_nspp%dim))
-                dissipation = params_nspp%dissipation/product(params_nspp%domain_size(1:params_nspp%dim))
-                u_RMS = sqrt(2*params_nspp%e_kin/product(params_nspp%domain_size(1:params_nspp%dim))/3)
-                call append_t_file( 'turbulent_statistics.t', (/time, dissipation, params_nspp%e_kin/product(params_nspp%domain_size(1:params_nspp%dim)), u_RMS, &
+                dissipation = params_nspp%dissipation/product(params_nspp%domain_size(1:params_nspp%dim) * (params_nspp%domain_slice_max(1:params_nspp%dim) - params_nspp%domain_slice_min(1:params_nspp%dim)))
+                u_RMS = sqrt(2*params_nspp%e_kin/product(params_nspp%domain_size(1:params_nspp%dim) * (params_nspp%domain_slice_max(1:params_nspp%dim) - params_nspp%domain_slice_min(1:params_nspp%dim)))/3)
+                call append_t_file( 'turbulent_statistics.t', (/time, dissipation, params_nspp%e_kin/product(params_nspp%domain_size(1:params_nspp%dim) * (params_nspp%domain_slice_max(1:params_nspp%dim) - params_nspp%domain_slice_min(1:params_nspp%dim))), u_RMS, &
                     (params_nspp%nu**3.0_rk / dissipation)**0.25_rk, sqrt(params_nspp%nu/dissipation), (params_nspp%nu*dissipation)**0.25_rk, &
                     sqrt(15.0_rk*params_nspp%nu*u_RMS**2/dissipation), sqrt(15.0_rk*params_nspp%nu*u_RMS**2/dissipation)*u_RMS/params_nspp%nu/))
             endif

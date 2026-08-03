@@ -710,6 +710,35 @@ contains
 
 
     !-------------------------------------------------------------------------------
+    ! for a fraction of the type a/2^level, this function returns the level and the integer a
+    ! elemental so that I can call it with arrays
+    !-------------------------------------------------------------------------------
+    elemental subroutine get_demonitator_dyadic_level(a, level, a_int)
+        implicit none
+        real(kind=rk), intent(in) :: a
+        integer(kind=ik), intent(out) :: level, a_int
+        real(kind=rk) :: temp_a
+
+        temp_a = a
+        level = 0
+
+        ! Keep multiplying by 2 until temp_a is an integer
+        do while (abs(temp_a - nint(temp_a)) > 1.0e-12_rk)
+            temp_a = temp_a * 2.0_rk
+            level = level + 1
+            if (level > 60) then
+                ! this number does not have a representation of the form a/2^level
+                temp_a = 0.0_rk
+                level = 0
+                exit
+            endif
+        end do
+
+        a_int = nint(temp_a)
+    end subroutine get_demonitator_dyadic_level
+
+
+    !-------------------------------------------------------------------------------
     ! runtime control routines
     ! flusi regularily reads from a file runtime_control.ini if it should do some-
     ! thing, such as abort, reload_params or save data.
@@ -1008,7 +1037,7 @@ contains
         implicit none
         character(len=*), intent(in) :: name
         character(len=*), intent(in) :: default
-        character(len=cshort), intent(out) :: value
+        character(len=*), intent(out) :: value
 
         integer :: i, rank, ierr
         character(len=clong) :: args
@@ -1063,7 +1092,7 @@ contains
     subroutine get_cmd_arg_str_vct( name, value )
         implicit none
         character(len=*), intent(in) :: name
-        character(len=cshort), intent(out), ALLOCATABLE :: value(:)
+        character(len=*), intent(out), ALLOCATABLE :: value(:)
 
         integer :: i, rank, ierr, n, k
         character(len=600) :: args

@@ -80,7 +80,7 @@ FFLAGS += -O3  # optimization flag
 FFLAGS += -Wuninitialized -Wall -Wextra -Wconversion -fimplicit-none -pedantic
 FFLAGS += -Wno-unused-variable -Wno-unused-parameter -Wno-unused-dummy-argument # -Wno-unused-function
 # error-catching flags
-FFLAGS += -fbounds-check -fbacktrace -ffpe-trap=zero,invalid
+FFLAGS += -fbounds-check -fbacktrace -ffpe-trap=zero,invalid # -fsanitize=address,leak
 FFLAGS += -finit-local-zero -finit-real=snan -finit-integer=-99999
 # debugging flags
 FFLAGS += -g3 -g -ggdb

@@ -111,7 +111,7 @@ module module_params
         ! decide if WABBIT should start from input files
         logical :: read_from_files
         ! files we want to read for inital cond.
-        character(len=cshort), dimension(:), allocatable :: input_files
+        character(len=chuge), dimension(:), allocatable :: input_files
         logical :: inicond_vorticity_formulation = .false.
         logical :: inicond_pressure_from_velocity = .false.
         logical :: inicond_helmholtz_projection = .false.
@@ -141,6 +141,8 @@ module module_params
         character(len=cshort) :: physics_type="not-initialized"
         character(len=cshort) :: PDE_type="not-initialized"
         real(kind=rk) :: domain_size(3)=0.0_rk
+        real(kind=rk) :: domain_slice_min(3)=0.0_rk
+        real(kind=rk) :: domain_slice_max(3)=1.0_rk
         integer(kind=ik) :: dim=2 ! can be 2 or 3
 
         ! -------------------------------------------------------------------------------------

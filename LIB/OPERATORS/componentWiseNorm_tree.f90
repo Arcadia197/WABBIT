@@ -173,7 +173,7 @@ subroutine componentWiseNorm_tree(params, hvy_block, tree_ID, which_norm, norm, 
         ! Mean is a special case, we need to divide by the volume
         elseif (which_norm == "Mean") then
             if (any(norm_case_ID/10 == (/0, 4/))) then
-                norm(:) = norm(:) / product(params%domain_size(1:params%dim))
+                norm(:) = norm(:) / product(params%domain_size(1:params%dim) * (params%domain_slice_max(1:params%dim) - params%domain_slice_min(1:params%dim)))
             else
                 call MPI_ALLREDUCE(MPI_IN_PLACE, volume, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
                 norm(:) = norm(:) / volume
@@ -239,7 +239,7 @@ subroutine componentWiseNorm_tree(params, hvy_block, tree_ID, which_norm, norm, 
         do p = 1, n_eqn
             ! we integrate over the full leaf layer, this is the domain size so we do not have to call MPI_ALLREDUCE for the volume integral
             if (any(norm_case_ID/10 == (/0, 4/))) then
-                norm(p) = norm(p) / product(params%domain_size(1:params%dim))
+                norm(p) = norm(p) / product(params%domain_size(1:params%dim) * (params%domain_slice_max(1:params%dim) - params%domain_slice_min(1:params%dim)))
             ! we compute only a part of it, so we compute the actual integral of the volume
             else
                 call MPI_ALLREDUCE(MPI_IN_PLACE, volume, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
@@ -309,7 +309,7 @@ subroutine componentWiseNorm_tree(params, hvy_block, tree_ID, which_norm, norm, 
         do p = 1, n_eqn
             ! we integrate over the full leaf layer, this is the domain size so we do not have to call MPI_ALLREDUCE for the volume integral
             if (any(norm_case_ID/10 == (/0, 4/))) then
-                norm(p) = norm(p) / product(params%domain_size(1:params%dim))
+                norm(p) = norm(p) / product(params%domain_size(1:params%dim) * (params%domain_slice_max(1:params%dim) - params%domain_slice_min(1:params%dim)))
             ! we compute only a part of it, so we compute the actual integral of the volume
             else
                 call MPI_ALLREDUCE(MPI_IN_PLACE, volume, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
