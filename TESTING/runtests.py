@@ -94,6 +94,7 @@ tests = [
         {"test_name":"acm", "wavelet":"CDF44", "dim":2},
         {"test_name":"acm_norm", "wavelet":"CDF44", "dim":2},
         {"test_name":"acm_significant", "wavelet":"CDF44", "dim":2},        
+        {"test_name":"acm_nonquadratic", "wavelet":"CDF40", "dim":2},        
         {"test_name":"3vorticesEquiFD2", "wavelet":"CDF20", "dim":2},
         {"test_name":"3vorticesEquiFD4", "wavelet":"CDF40", "dim":2},
         {"test_name":"3vorticesEquiFD6", "wavelet":"CDF60", "dim":2},
@@ -197,7 +198,7 @@ class WabbitTest:
             self.test_dir = os.path.join(self.run_dir, "TESTING", "wavelets", f"{self.test_name}_{self.wavelet}")
         elif self.test_name in ["blob_equi", "blob_adaptive", "blob_equi_avg"]:
             self.test_dir = os.path.join(self.run_dir, "TESTING", "conv", f"{self.test_name}_{self.dim}D_{self.wavelet}")
-        elif self.test_name in ["acm", "acm_norm", "acm_significant"]:
+        elif self.test_name in ["acm", "acm_norm", "acm_significant", "acm_nonquadratic"]:
             self.test_dir = os.path.join(self.run_dir, "TESTING", "acm", f"{self.test_name}_{self.wavelet}")
         elif "3vortices" in self.test_name:
             self.test_dir = os.path.join(self.run_dir, "TESTING", "acm", "3vortices", f"{self.test_name}_{self.wavelet}")
@@ -360,11 +361,11 @@ class WabbitTest:
             return result1
         
         # this part is meant for any tests which simply call an ini file, just provide the ini-file in the beginning and the rest is handled automatically
-        elif self.test_name in ["blob_equi", "blob_adaptive", "blob_equi_avg", "acm", "acm_norm", "acm_significant", "bumblebeeFlowEquiFD4"] or "3vortices" in self.test_name or "taylorGreen" in self.test_name:
+        elif self.test_name in ["blob_equi", "blob_adaptive", "blob_equi_avg", "acm", "acm_norm", "acm_significant", "acm_nonquadratic", "bumblebeeFlowEquiFD4"] or "3vortices" in self.test_name or "taylorGreen" in self.test_name:
             # lets say where the ini-file is
             if self.test_name in ["blob_equi", "blob_adaptive", "blob_equi_avg"]:
                 ini_file = os.path.join("..", "blob-convection.ini")  # relative to tmp_dir
-            elif self.test_name in ["acm", "acm_norm", "acm_significant"]:
+            elif self.test_name in ["acm", "acm_norm", "acm_significant", "acm_nonquadratic"]:
                 ini_file = os.path.join("..", "acm_cyl.ini")  # relative to tmp_dir
             elif "3vortices" in self.test_name:
                 ini_file = os.path.join("..", "PARAMS_3vortices.ini")  # relative to tmp_dir
@@ -422,7 +423,7 @@ class WabbitTest:
             self.log_file = os.path.join(self.test_dir, "run.log")
         elif self.test_name in ["blob_equi", "blob_adaptive", "blob_equi_avg"]:
             self.log_file = os.path.join(self.test_dir, "blob-convection.log")
-        elif self.test_name in ["acm", "acm_norm", "acm_significant"]:
+        elif self.test_name in ["acm", "acm_norm", "acm_significant", "acm_nonquadratic"]:
             self.log_file = os.path.join(self.test_dir, "acm_cyl.log")
         elif self.test_name in ["dry_fractal_tree", "dry_muscaComplete", "dry_dipteraFourier", "dry_dipteraHermite", "dry_bumblebee", 
                                 "dry_emundus_4wings", "dry_dipteraBodyRotation", "dry_paratuposaComplete", "dry_butterflyKineloaderV2", "dry_3Dbristles", "dry_snowman"]:

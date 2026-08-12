@@ -102,7 +102,7 @@ module module_nspp
     logical :: read_from_files = .false.
 
     integer(kind=ik) :: dim, N_fields_saved
-    real(kind=rk), dimension(3) :: domain_size=0.0_rk
+    real(kind=rk), dimension(3) :: domain_size=0.0_rk, domain_slice_min=0.0_rk, domain_slice_max=1.0_rk
     character(len=clong) :: inicond="", discretization=""
 
     ! VPM section
@@ -211,6 +211,10 @@ contains
 
     call read_param_mpi(FILE, 'Domain', 'dim', params_nspp%dim, 2 )
     call read_param_mpi(FILE, 'Domain', 'domain_size', params_nspp%domain_size(1:params_nspp%dim), (/ 1.0_rk, 1.0_rk, 1.0_rk /) )
+    params_nspp%domain_slice_min=(/ 0.0_rk, 0.0_rk, 0.0_rk /)
+    call read_param_mpi(FILE, 'Domain', 'domain_slice_min', params_nspp%domain_slice_min(1:params_nspp%dim), params_nspp%domain_slice_min(1:params_nspp%dim) )
+    params_nspp%domain_slice_max=(/ 1.0_rk, 1.0_rk, 1.0_rk /)
+    call read_param_mpi(FILE, 'Domain', 'domain_slice_max', params_nspp%domain_slice_max(1:params_nspp%dim), params_nspp%domain_slice_max(1:params_nspp%dim) )
     params_nspp%periodic_BC = .true.
     call read_param_mpi(FILE, 'Domain', 'periodic_BC', params_nspp%periodic_BC, params_nspp%periodic_BC )
 

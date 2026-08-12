@@ -14,8 +14,6 @@ subroutine ini_file_to_params( params, filename )
    type(inifile)                                   :: FILE
    ! maximum memory available on all cpus
    real(kind=rk)                                   :: maxmem, mem_per_block, nstages
-   ! string read from command line call
-   character(len=cshort)                           :: memstring
    integer(kind=ik)                                :: d,i, Nblocks_Jmax, g, N_files, Nrk, g_RHS_min, diff_L, diff_R, Bs(1:3)
    ! some parameters for checking ghost node sizes with FD discretization
    real(kind=rk), allocatable                      :: filter_dummy(:)

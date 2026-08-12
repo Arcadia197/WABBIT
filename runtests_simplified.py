@@ -34,6 +34,8 @@ import shutil
 import glob
 import time
 import contextlib
+import fnmatch
+import itertools
 
 try:
     import wabbit_tools
@@ -81,12 +83,14 @@ tests = [
     # If it is not, the wavelet coefficients have a serious problem.
     # 2D
     *[{"name": "equi_refineCoarsen_FWT_IWT", "type": "wabbit-internal", "root_folder": "wavelets", "wavelet": wavelet, "dim": 2,
+       "groups": ["wabbit_internal", "refine_coarsen"],
        "commands": [ "{mpi_command} {run_dir}/wabbit-post --refine-coarsen-test --wavelet={wavelet} --memory={memory} --dim={dim}",
                      "{mpi_command} {run_dir}/wabbit-post --wavelet-decomposition-unit-test --wavelet={wavelet} --memory={memory} --dim={dim}" ]}
       for wavelet in ["CDF20", "CDF22", "CDF24", "CDF26", "CDF28", "CDF40", "CDF42", "CDF44", "CDF46", "CDF60", "CDF62", "CDF64", "CDF66", "CDF80", "CDF82"]],
 
     # 3D
     *[{"name": "equi_refineCoarsen_FWT_IWT", "type": "wabbit-internal", "root_folder": "wavelets", "wavelet": wavelet, "dim": 3,
+       "groups": ["wabbit_internal", "refine_coarsen"] + (["short"] if wavelet in ["CDF20", "CDF22", "CDF40", "CDF42", "CDF60", "CDF62"] else []),
        "commands": [ "{mpi_command} {run_dir}/wabbit-post --refine-coarsen-test --wavelet={wavelet} --memory={memory} --dim={dim}",
                      "{mpi_command} {run_dir}/wabbit-post --wavelet-decomposition-unit-test --wavelet={wavelet} --memory={memory} --dim={dim}" ]}
       for wavelet in ["CDF20", "CDF22", "CDF40", "CDF42", "CDF44", "CDF60", "CDF62"]],
@@ -94,16 +98,19 @@ tests = [
     # ghost_nodes tests
     # 2D
     *[{"name": "ghost_nodes", "type": "wabbit-internal", "root_folder": "wavelets", "wavelet": wavelet, "dim": 2,
-       "commands": ["{mpi_command} {run_dir}/wabbit-post --ghost-nodes-test --wavelet={wavelet} --memory={memory} --dim={dim}"]}
+       "groups": ["wabbit_internal", "ghost_nodes"],
+       "commands": ["{mpi_command} {run_dir}/wabbit-post --ghost-nodes-test --wavelet={wavelet} --memory={memory} --dim={dim} --Jmax=5"]}
       for wavelet in ["CDF20", "CDF40", "CDF60", "CDF80"]],
      # 3D
     *[{"name": "ghost_nodes", "type": "wabbit-internal", "root_folder": "wavelets", "wavelet": wavelet, "dim": 3,
+       "groups": ["wabbit_internal", "ghost_nodes", "short"],
        "commands": ["{mpi_command} {run_dir}/wabbit-post --ghost-nodes-test --wavelet={wavelet} --memory={memory} --dim={dim}"]}
       for wavelet in ["CDF20", "CDF40", "CDF60"]],
 
     # invertibility tests (2D only)
     *[{"name": "invertibility", "type": "wabbit-internal", "root_folder": "wavelets", "wavelet": wavelet, "dim": 2,
-       "commands": ["{mpi_command} {run_dir}/wabbit-post --wavelet-decomposition-invertibility-test --wavelet={wavelet} --memory={memory} --dim={dim}"]}
+       "groups": ["wabbit_internal", "invertibility"] + (["short"] if wavelet in ["CDF20", "CDF22", "CDF40", "CDF42", "CDF60", "CDF62"] else []),
+       "commands": ["{mpi_command} {run_dir}/wabbit-post --wavelet-decomposition-invertibility-test --wavelet={wavelet} --memory={memory} --dim={dim} --Jmax=7"]}
       for wavelet in ["CDF20", "CDF22", "CDF24", "CDF26", "CDF28", "CDF40", "CDF42", "CDF44", "CDF46", "CDF60", "CDF62", "CDF64", "CDF66", "CDF80", "CDF82"]],
 
     # ===== SIMULATION TESTS =====
@@ -117,7 +124,8 @@ tests = [
     # a coarse mesh (vor_000020000000.h5), refining it, then coarsening it back.
     # Wavelet is parameterized via {wavelet} in the commands.
     # Same idea as equidistant refine-coarsening test above, but on a non-equidistant grid.
-    *[{"name": f"adaptive_{wavelet}", "type": "simulation", "root_folder": "wavelets", "wavelet": wavelet,
+    *[{"name": f"adaptive_{wavelet}", "type": "simulation", "root_folder": "wavelets", "wavelet": wavelet, "dim": 2,
+       "groups": ["adaptive", "refine_coarsen", "short"],
        "input_files": ["../vor_000020000000.h5"],
        "commands": [ "{mpi_command} {run_dir}/wabbit-post --refine-everywhere vor_000020000000.h5 vor_00100.h5 --wavelet={wavelet} --time=1.0",
                      "{mpi_command} {run_dir}/wabbit-post --coarsen-everywhere vor_00100.h5 vor_00200.h5 --wavelet={wavelet} --time=2.0",
@@ -128,111 +136,177 @@ tests = [
     # Blob convection tests
     # Test equispaced and adaptive mesh simulations with blob convection.
     # These verify basic simulation setup and execution.
-    {"name": "blob_equi_2D_CDF40", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_equi_3D_CDF20", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_equi_3D_CDF40", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_equi_avg_2D_CDF40", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_equi_2D_CDF40", "type": "simulation", "root_folder": "conv", "wavelet": 40, "dim": 2,
+        "groups": ["blob", "equi"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_equi_3D_CDF20", "type": "simulation", "root_folder": "conv", "wavelet": 20, "dim": 3,
+        "groups": ["blob", "equi", "short"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_equi_3D_CDF40", "type": "simulation", "root_folder": "conv", "wavelet": 40, "dim": 3,
+        "groups": ["blob", "equi", "short"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_equi_avg_2D_CDF40", "type": "simulation", "root_folder": "conv", "wavelet": 40, "dim": 2,
+        "groups": ["blob", "equi"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
 
-    {"name": "blob_adaptive_2D_CDF20", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_2D_CDF22", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_2D_CDF40", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_2D_CDF42", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_2D_CDF44", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_2D_CDF60", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_2D_CDF62", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_3D_CDF22", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_3D_CDF40", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
-    {"name": "blob_adaptive_3D_CDF44", "type": "simulation", "root_folder": "conv", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_adaptive_2D_CDF20", "type": "simulation", "root_folder": "conv", "wavelet": 20, "dim": 2,
+        "groups": ["blob", "adaptive"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_adaptive_2D_CDF22", "type": "simulation", "root_folder": "conv", "wavelet": 22, "dim": 2,
+        "groups": ["blob", "adaptive"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_adaptive_2D_CDF40", "type": "simulation", "root_folder": "conv", "wavelet": 40, "dim": 2,
+        "groups": ["blob", "adaptive", "short"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_adaptive_2D_CDF42", "type": "simulation", "root_folder": "conv", "wavelet": 42, "dim": 2,
+        "groups": ["blob", "adaptive"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+
+    {"name": "blob_adaptive_3D_CDF40", "type": "simulation", "root_folder": "conv", "wavelet": 40, "dim": 3,
+            "groups": ["blob", "adaptive", "short"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
+    {"name": "blob_adaptive_3D_CDF44", "type": "simulation", "root_folder": "conv", "wavelet": 44, "dim": 3,
+        "groups": ["blob", "adaptive", "short"], "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit blob-convection.ini --memory={memory}"]},
 
     "\n---ACM tests, with and without penalization---",
     # ACM (Adaptive Cartesian Mesh) cylinder tests
     # Test cylindrical geometry simulations with different wavelet types.
     # acm tests
-    {"name": "acm_CDF40",             "type": "simulation", "root_folder": "acm", "input_files": ["acm_cyl.ini"], "commands": ["{mpi_command} {run_dir}/wabbit acm_cyl.ini --memory={memory}"]},
-    {"name": "acm_CDF44",             "type": "simulation", "root_folder": "acm", "input_files": ["acm_cyl.ini"], "commands": ["{mpi_command} {run_dir}/wabbit acm_cyl.ini --memory={memory}"]},
-    {"name": "acm_norm_CDF44",        "type": "simulation", "root_folder": "acm", "input_files": ["acm_cyl.ini"], "commands": ["{mpi_command} {run_dir}/wabbit acm_cyl.ini --memory={memory}"]},
-    {"name": "acm_significant_CDF44", "type": "simulation", "root_folder": "acm", "input_files": ["acm_cyl.ini"], "commands": ["{mpi_command} {run_dir}/wabbit acm_cyl.ini --memory={memory}"]},
+    {"name": "flowPastCylinder_FD4_CDF40", "type": "simulation", "root_folder": "acm/flowPastCylinder", "wavelet": 40, "dim": 2,
+        "groups": ["acm", "adaptive", "cylinder", "short"], "input_files": ["PARAMS_flowPastCylinder.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_flowPastCylinder.ini --memory={memory}"]},
+    {"name": "flowPastCylinder_FD4_CDF44", "type": "simulation", "root_folder": "acm/flowPastCylinder", "wavelet": 44, "dim": 2,
+        "groups": ["acm", "adaptive", "cylinder", "short"], "input_files": ["PARAMS_flowPastCylinder.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_flowPastCylinder.ini --memory={memory}"]},
+    {"name": "flowPastCylinder_threshold_norm", "type": "simulation", "root_folder": "acm/flowPastCylinder", "wavelet": 44, "dim": 2,
+        "groups": ["acm", "adaptive", "cylinder"], "input_files": ["PARAMS_flowPastCylinder.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_flowPastCylinder.ini --memory={memory}"]},
+    {"name": "flowPastCylinder_significant_refinement", "type": "simulation", "root_folder": "acm/flowPastCylinder", "wavelet": 44, "dim": 2,
+        "groups": ["acm", "adaptive", "cylinder"], "input_files": ["PARAMS_flowPastCylinder.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_flowPastCylinder.ini --memory={memory}"]},
+    {"name": "flowPastCylinder_nonquadratic_domain", "type": "simulation", "root_folder": "acm/flowPastCylinder", "wavelet": 40, "dim": 2,
+        "groups": ["acm", "adaptive", "cylinder"], "input_files": ["PARAMS_flowPastCylinder.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_flowPastCylinder.ini --memory={memory}"]},
 
     # Three vortices tests
     # Test vortex interaction simulations with different finite difference orders (FD2, FD4, FD6)
     # and both equispaced and adaptive meshes.
     # 3vortices tests
-    {"name": "3vorticesEquiFD2_CDF20", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
-    {"name": "3vorticesEquiFD4_CDF40", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
-    {"name": "3vorticesEquiFD6_CDF60", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesEquiFD2_CDF20", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 20, "dim": 2,
+        "groups": ["acm", "3vortices", "equi"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesEquiFD4_CDF40", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 40, "dim": 2,
+        "groups": ["acm", "3vortices", "equi"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesEquiFD6_CDF60", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 60, "dim": 2,
+        "groups": ["acm", "3vortices", "equi"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
 
-    {"name": "3vorticesAdaptFD2_CDF20", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
-    {"name": "3vorticesAdaptFD2_CDF22", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
-    {"name": "3vorticesAdaptFD4_CDF40", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
-    {"name": "3vorticesAdaptFD4_CDF42", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
-    {"name": "3vorticesAdaptFD6_CDF60", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
-    {"name": "3vorticesAdaptFD6_CDF62", "type": "simulation", "root_folder": "acm/3vortices", "input_files": ["*_000010000000.h5", "*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesAdaptFD2_CDF20", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 20, "dim": 2,
+        "groups": ["acm", "3vortices", "adaptive"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesAdaptFD2_CDF22", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 22, "dim": 2,
+        "groups": ["acm", "3vortices", "adaptive"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesAdaptFD4_CDF40", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 40, "dim": 2,
+        "groups": ["acm", "3vortices", "adaptive"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesAdaptFD4_CDF42", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 42, "dim": 2,
+        "groups": ["acm", "3vortices", "adaptive"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesAdaptFD6_CDF60", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 60, "dim": 2,
+        "groups": ["acm", "3vortices", "adaptive"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
+    {"name": "3vorticesAdaptFD6_CDF62", "type": "simulation", "root_folder": "acm/3vortices", "wavelet": 62, "dim": 2,
+        "groups": ["acm", "3vortices", "adaptive"], "input_files": ["*_000010000000.h5", "*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_3vortices.ini --memory={memory}"]},
 
     # Taylor-Green vortex tests
     # Classic fluid dynamics benchmark: decaying vortex flow.
     # Tests different finite difference orders with equispaced meshes.
     # taylorGreen tests
-    {"name": "taylorGreenEqui_FD2_CDF20", "type": "simulation", "root_folder": "acm/taylorGreen", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_taylor_green.ini --memory={memory}"]},
-    {"name": "taylorGreenEqui_FD4_CDF40", "type": "simulation", "root_folder": "acm/taylorGreen", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_taylor_green.ini --memory={memory}"]},
-    {"name": "taylorGreenEqui_FD6_CDF60", "type": "simulation", "root_folder": "acm/taylorGreen", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_taylor_green.ini --memory={memory}"]},
+    {"name": "taylorGreenEqui_FD2_CDF20", "type": "simulation", "root_folder": "acm/taylorGreen", "wavelet": 20, "dim": 3,
+        "groups": ["acm", "taylorGreen", "equi"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_taylor_green.ini --memory={memory}"]},
+    {"name": "taylorGreenEqui_FD4_CDF40", "type": "simulation", "root_folder": "acm/taylorGreen", "wavelet": 40, "dim": 3,
+        "groups": ["acm", "taylorGreen", "equi"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_taylor_green.ini --memory={memory}"]},
+    {"name": "taylorGreenEqui_FD6_CDF60", "type": "simulation", "root_folder": "acm/taylorGreen", "wavelet": 60, "dim": 3,
+        "groups": ["acm", "taylorGreen", "equi"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS_taylor_green.ini --memory={memory}"]},
 
     # Bumblebee flow test
     # Insect-scale fluid flow simulation with kinematics.
     # bumblebeeFlowEquiFD4
-    {"name": "bumblebeeFlowEquiFD4_CDF40", "type": "simulation", "root_folder": "acm", "input_files": ["*.ini"], "commands": ["{mpi_command} {run_dir}/wabbit PARAMS.ini --memory={memory}"]},
+    {"name": "bumblebeeFlowEquiFD4_CDF40", "type": "simulation", "root_folder": "acm", "wavelet": 40, "dim": 3,
+        "groups": ["acm", "insects"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit PARAMS.ini --memory={memory}"]},
 
     "\n---Mask generation tests (dry runs)---",
     # Dry run tests (insect flight simulations)
     # These are quick validation tests that don't produce full simulation output.
     # They verify the simulation setup without running the full computation.
     # Used for testing various insect geometries and configurations.
-    {"name": "dry_fractal_tree_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
-    {"name": "dry_bumblebee_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
-    {"name": "dry_emundus_4wings_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_muscaComplete_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_dipteraFourier_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_dipteraHermite_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_dipteraBodyRotation_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_paratuposaComplete_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_butterflyKineloaderV2_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini", "*.kineloader", "*.superstl"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_3Dbristles_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
+    {"name": "dry_fractal_tree_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
+    {"name": "dry_bumblebee_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask", "short"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
+    {"name": "dry_emundus_4wings_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_muscaComplete_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_dipteraFourier_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_dipteraHermite_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_dipteraBodyRotation_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_paratuposaComplete_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_butterflyKineloaderV2_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini", "*.kineloader", "*.superstl"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_3Dbristles_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
     # wing geometry models
-    {"name": "dry_Insects-Wing-Fourier", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
-    {"name": "dry_Insects-Wing-Linear", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
-    {"name": "dry_Insects-Wing-Polygon", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
-    {"name": "dry_Insects-Wing-BumblebeeHardcoded", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
-    {"name": "dry_Insects-Wing-FourierCorrugated", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
-    {"name": "dry_Insects-Wing-FourierDamaged", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
+    {"name": "dry_Insects-Wing-Fourier", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
+    {"name": "dry_Insects-Wing-Linear", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
+    {"name": "dry_Insects-Wing-Polygon", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
+    {"name": "dry_Insects-Wing-BumblebeeHardcoded", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
+    {"name": "dry_Insects-Wing-FourierCorrugated", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
+    {"name": "dry_Insects-Wing-FourierDamaged", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned"]},
     # kinematics
-    {"name": "dry_Insects-Kinematics-Fourier", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_Insects-Kinematics-Hermite", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_Insects-Kinematics-SuzukiHardcoded", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_Insects-Kinematics-Fourier", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_Insects-Kinematics-Hermite", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_Insects-Kinematics-SuzukiHardcoded", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned --save-us"]},
 
-    {"name": "dry_Insects-CompleteModel-Dragonfly", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini","*.sstl"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned --save-us"]},
-    {"name": "dry_snowman_2D_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
-    {"name": "dry_snowman_3D_CDF22", "type": "simulation", "root_folder": "insects", "input_files": ["*.ini"],
-     "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
+    {"name": "dry_Insects-CompleteModel-Dragonfly", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini","*.sstl"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS.ini --memory={memory} --pruned --save-us"]},
+    {"name": "dry_snowman_2D_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
+    {"name": "dry_snowman_3D_CDF22", "type": "simulation", "root_folder": "insects", "wavelet": 22, "dim": 3,
+        "groups": ["insects", "mask"], "input_files": ["*.ini"],
+        "commands": ["{mpi_command} {run_dir}/wabbit-post --dry-run PARAMS_dry_run.ini --memory={memory} --pruned"]},
 ]
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -517,6 +591,51 @@ def compare_hdf5_files(test_dir, tmp_dir, verbose=False, write_diff=False, log_f
     return all_ok
 
 
+def iter_tests_with_headers(tests):
+    """Yield (section_header, test_dict) pairs, skipping the header strings themselves."""
+    header = None
+    for item in tests:
+        if isinstance(item, str):
+            header = item.strip()
+            continue
+        yield header, item
+
+
+def test_matches(test, name_patterns, group_patterns):
+    """Check whether a test matches the requested -t/-g filters (wildcards via fnmatch)."""
+    if name_patterns and not any(fnmatch.fnmatch(test["name"], pat) for pat in name_patterns):
+        return False
+    if group_patterns:
+        test_groups = test.get("groups", [])
+        if not any(fnmatch.fnmatch(group, pat) for group in test_groups for pat in group_patterns):
+            return False
+    return True
+
+
+def print_test_catalog(tests):
+    """Print all available tests grouped by section header, and all known groups."""
+    printed_header = None
+    all_groups = set()
+
+    grouped_by_name = itertools.groupby(iter_tests_with_headers(tests), key=lambda h_t: (h_t[0], h_t[1]["name"]))
+    for (header, name), entries in grouped_by_name:
+        entries = list(entries)
+        test_groups = entries[0][1].get("groups", [])
+        all_groups.update(test_groups)
+
+        if header != printed_header:
+            print(f"\n{header}")
+            printed_header = header
+
+        variant_info = f"  ({len(entries)} variants)" if len(entries) > 1 else ""
+        groups_info = f"  [{', '.join(test_groups)}]" if test_groups else ""
+        print(f"  {name}{variant_info}{groups_info}")
+
+    print("\nAvailable groups:")
+    for group in sorted(all_groups):
+        print(f"  {group}")
+
+
 def main():
     """
     Main entry point for running WABBIT tests.
@@ -548,7 +667,16 @@ def main():
     parser.add_argument('--wabbit-dir', type=str, default=None, help='Directory containing wabbit executable')
     parser.add_argument('--keep-tmp', action='store_true', help='Keep tmp directories for all simulation tests')
     parser.add_argument('--update-failed-tests', action='store_true', help='Update reference data for failed simulation tests')
+    parser.add_argument('--list', action='store_true', help='List all available tests and groups, then exit')
+    parser.add_argument('-t', '--tests', nargs='+', default=None, metavar='NAME',
+                         help='Run only tests matching these names (wildcards allowed, e.g. "blob_*")')
+    parser.add_argument('-g', '--groups', nargs='+', default=None, metavar='GROUP',
+                         help='Run only tests belonging to these groups (see --list, wildcards allowed)')
     args = parser.parse_args()
+
+    if args.list:
+        print_test_catalog(tests)
+        return
 
     mpi_command = args.mpi_command or f"nice mpirun -n {args.nprocs}"
     memory = args.memory
@@ -570,17 +698,25 @@ def main():
     print(f"  WABBIT directory: {run_dir}")
     print()
 
-    # Run all tests in order (no filtering - all tests run every time)
+    # Select tests according to -t/--tests and -g/--groups (both default to "run everything")
+    selected_tests = [(header, test_item) for header, test_item in iter_tests_with_headers(tests)
+                       if test_matches(test_item, args.tests, args.groups)]
+
+    if not selected_tests:
+        print("No tests matched the given --tests/--groups filters.")
+        return
+
     happy_count = 0  # Number of passed tests
     sad_count = 0     # Number of failed or skipped tests
     start_time = time.time()
+    printed_header = None
 
-    # Iterate through all test definitions
-    for test_item in tests:
-        # Print section headers (strings starting with "---")
-        if isinstance(test_item, str) and "---" in test_item:
-            print(test_item)
-            continue
+    # Iterate through the selected test definitions
+    for header, test_item in selected_tests:
+        # Print the section header once, the first time a selected test appears under it
+        if header != printed_header:
+            print(header)
+            printed_header = header
 
         # Extract test metadata for display
         test_name = test_item.get("name", "?")
@@ -588,8 +724,8 @@ def main():
         test_wavelet = test_item.get("wavelet", "-----")
         test_dim = test_item.get("dim", "-")
         
-        # Print test info: name (38 chars) wavelet=... dim=...D
-        print(f"  {test_name:<38} wavelet={test_wavelet} dim={test_dim}D ", end="")
+        # Print test info: name (of specific length) wavelet=... dim=...D
+        print(f"  {test_name:<40} wavelet={test_wavelet} dim={test_dim}D ", end="")
 
         test_start = time.time()
         
@@ -639,7 +775,7 @@ def main():
         
         # Collect failed simulation tests with tmp dirs
         failed_sim_tests = []
-        for test_item in tests:
+        for header, test_item in selected_tests:
             if isinstance(test_item, str):
                 continue
             if test_item.get("type") == "simulation":
