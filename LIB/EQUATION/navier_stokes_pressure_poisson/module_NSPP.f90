@@ -32,23 +32,7 @@ module module_nspp
   INITIALIZE_ASCII_FILES_NSPP
   !**********************************************************************************************
 
-  ! for 2d wing section optimization
-  type :: wingsection
-      logical :: initialized = .false.
-      real(kind=rk), allocatable :: ai_x0(:), bi_x0(:)
-      real(kind=rk), allocatable :: ai_y0(:), bi_y0(:)
-      real(kind=rk), allocatable :: ai_alpha(:), bi_alpha(:)
-      real(kind=rk) :: a0_x0, section_thickness
-      real(kind=rk) :: a0_y0
-      real(kind=rk) :: a0_alpha
-      real(kind=rk) :: time
-      integer(kind=ik) :: nfft_x0, nfft_y0, nfft_alpha
-      character(len=cshort) :: kinematics_type
-  end type
-
-  type(wingsection) :: wingsections(2)
-
-! how many different parts of the mask can be distinguished at max
+  ! how many different parts of the mask can be distinguished at max
   integer(kind=ik) :: ncolors=8
 
   ! user defined data structure for time independent parameters, settings, constants
@@ -114,7 +98,6 @@ module module_nspp
     integer(kind=ik), allocatable :: geometry_colors(:)
     character(len=cshort) :: sponge_type=""
     character(len=cshort) :: coarsening_indicator=""
-    character(len=cshort) :: wingsection_inifiles(1:2)
     character(len=cshort) :: scalar_BC_type="neumann"
     character(len=cshort), allocatable :: names(:)
     logical :: inicond_vorticity_formulation = .false.
@@ -156,7 +139,6 @@ contains
 #include "save_data_NSPP.f90"
 #include "statistics_NSPP.f90"
 #include "time_statistics_NSPP.f90"
-#include "2D_wingsection.f90"
 
   !-----------------------------------------------------------------------------
   ! main level wrapper routine to read parameters in the physics module. It reads
@@ -345,12 +327,6 @@ contains
     call read_param_mpi(FILE, 'nspp-new', 'u_mean_set', params_nspp%u_mean_set, (/1.0_rk, 0.0_rk, 0.0_rk/) )
     call read_param_mpi(FILE, 'VPM', 'h_channel', params_nspp%h_channel, 0.25_rk)
 
-    do i=1,params_nspp%n_geometries
-        if (params_nspp%geometries(i) == "2D-wingsection" .or. params_nspp%geometries(i) == "two-moving-cylinders") then
-            call read_param_mpi(FILE, 'VPM', 'wingsection_inifiles', params_nspp%wingsection_inifiles, (/"", ""/))
-        endif
-    enddo
-
     call read_param_mpi(FILE, 'Sponge', 'use_sponge', params_nspp%use_sponge, .false. )
     call read_param_mpi(FILE, 'Sponge', 'L_sponge', params_nspp%L_sponge, 0.0_rk )
     call read_param_mpi(FILE, 'Sponge', 'C_sponge', params_nspp%C_sponge, 1.0e-2_rk )
@@ -516,7 +492,7 @@ contains
 
     ! before we init the insects, we have to count how many there are
     do i=1,params_nspp%n_geometries
-        if (strings_are_similar(params_nspp%geometries(i), "insect") .or. strings_are_similar(params_nspp%geometries(i), "active-grid") .or. &
+        if (strings_are_similar(params_nspp%geometries(i), "insect") .or. &
             strings_are_similar(params_nspp%geometries(i), "cylinder-free") .or. strings_are_similar(params_nspp%geometries(i), "sphere-free") .or. &
             strings_are_similar(params_nspp%geometries(i), "plate-free")) then
             n_insects = n_insects + 1
@@ -534,7 +510,7 @@ contains
         ! if used, setup insect. Note active grid is part of the insects: they require the same init module
         !
         ! NOTE: there are several testing geometries used to test the free-flight solver: cylinder-free, sphere-free and plate-free (2D)
-        if (strings_are_similar(params_nspp%geometries(i), "insect") .or. strings_are_similar(params_nspp%geometries(i), "active-grid") .or. &
+        if (strings_are_similar(params_nspp%geometries(i), "insect") .or. &
             strings_are_similar(params_nspp%geometries(i), "cylinder-free") .or. strings_are_similar(params_nspp%geometries(i), "sphere-free") .or. &
             strings_are_similar(params_nspp%geometries(i), "plate-free")) then
             ! when computing passive scalars, we require derivatives of the mask function, which
@@ -585,11 +561,6 @@ contains
             if (.not. params_nspp%use_free_flight_solver .and. strings_are_similar(insects(insect_id)%BodyMotion, "free_flight")) then
                 call abort(62371118, "You seem to use an insect in free-flight mode, but you did not activate the free-flight solver in the physics settings. Please check your ini-file.")
             endif
-        endif
-
-        if (params_nspp%geometries(i)=="2D-wingsection" .or. params_nspp%geometries(i)=="two-moving-cylinders") then
-            call init_wingsection_from_file(params_nspp%wingsection_inifiles(1), wingsections(1), 0.0_rk)
-            call init_wingsection_from_file(params_nspp%wingsection_inifiles(2), wingsections(2), 0.0_rk)
         endif
 
 
@@ -784,7 +755,7 @@ contains
       character(len=cshort) :: headers(1:100)  ! we can use this to create headers
 
       is_insect = .false.
-      if (any(strings_are_similar(params_nspp%geometries(:), "insect")) .or. any(strings_are_similar(params_nspp%geometries(:), "active-grid")) .or. &
+      if (any(strings_are_similar(params_nspp%geometries(:), "insect")) .or. &
         any(strings_are_similar(params_nspp%geometries(:), "cylinder-free")) .or. any(strings_are_similar(params_nspp%geometries(:), "sphere-free")) .or. &
         any(strings_are_similar(params_nspp%geometries(:), "plate-free"))) is_insect = .true.
 
@@ -976,7 +947,7 @@ contains
     integer :: i, count_insects
     count_insects = 0
     do i = 1, i_geom
-        if (strings_are_similar(params_nspp%geometries(i), "insect") .or. strings_are_similar(params_nspp%geometries(i), "active-grid") .or. &
+        if (strings_are_similar(params_nspp%geometries(i), "insect") .or. &
             strings_are_similar(params_nspp%geometries(i), "cylinder-free") .or. strings_are_similar(params_nspp%geometries(i), "sphere-free") .or. &
             strings_are_similar(params_nspp%geometries(i), "plate-free")) then
             count_insects = count_insects + 1

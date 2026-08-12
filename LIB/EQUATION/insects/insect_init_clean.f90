@@ -394,7 +394,6 @@ subroutine initialize_insect(time, fname_ini, Insect, SECTION, Insect_ID, resume
     ! calling this routine.
     call Update_Insect( time, Insect )
 
-
     if (root) then
         write(*,'(80("<"))')
         write(*,*) "Insect initialization is complete."
