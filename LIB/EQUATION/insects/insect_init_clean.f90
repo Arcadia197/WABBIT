@@ -285,7 +285,7 @@ subroutine initialize_insect(time, fname_ini, Insect, SECTION, Insect_ID, resume
     Insect%L_smooth = Insect%C_smooth*dx_reference
     if (Insect%smoothing_type == "hester") then
         Insect%L_smooth = Insect%epsilon_hester
-        Insect%safety = max(5.0_rk*Insect%epsilon_hester, 2*dx_reference)
+        Insect%safety = max(15.0_rk*Insect%epsilon_hester, 2*dx_reference)
     else
         Insect%safety = 3.5_rk*Insect%L_smooth
     end if
