@@ -168,7 +168,7 @@ subroutine rigid_solid_init(time, Insect, resume_backup, Insect_ID)
             write(*,'(A, es16.8)') "Rigid solid solver is resuming from file: we read Insect%STATE from ./insect_state_vector.t, time=",time
 
             call count_lines_in_ascii_file('insect_state_vector.t', n_lines, n_header)
-            call count_cols_in_ascii_file('insect_state_vector.t', n_cols, n_header)
+            call count_cols_in_ascii_file('insect_state_vector.t', n_cols, n_header, delimiter=';')
 
             if (n_cols < 21) call abort(202117021, "For some reason insect_state_vector.t contains not enough columns....something is wrong?")
 
