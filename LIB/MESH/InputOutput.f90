@@ -1042,6 +1042,9 @@ subroutine read_field2tree(params, fnames, N_files, tree_ID, hvy_block, verbosit
         params%Bs = Bs
         params%domain_size = domain
 
+        ! no cropping is used by default, but the variable is not set automatically
+        params%domainSizeCropped = params%domain_size
+
         ! we have to allocate grid if this routine is called for the first time
         call allocate_forest(params, hvy_block)
 
