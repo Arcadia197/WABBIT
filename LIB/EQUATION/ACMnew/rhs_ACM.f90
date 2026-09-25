@@ -223,7 +223,7 @@ subroutine RHS_ACM( time, u, g, x0, dx, rhs, mask, stage, n_domain )
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%enstrophy, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%mean_flow, 3, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
             ! mean depends on volume depends on the cropping of the domain, so we have to take care of that
-            params_acm%mean_flow = params_acm%mean_flow / get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xy', 'xyz', params_acm%dim==3))
+            params_acm%mean_flow = params_acm%mean_flow / get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xyz', 'xy ', params_acm%dim==3))
             params_acm%dissipation = params_acm%enstrophy * params_acm%nu
         endif
 
@@ -1753,7 +1753,7 @@ subroutine RHS_3D_acm(g, Bs, dx, x0, phi, order_discretization, time, rhs, mask,
     if (params_acm%HIT_linear_forcing) then
         G_gain = params_acm%HIT_gain
         ! volume depends on the cropping of the domain, so we have to take care of that
-        e_kin_set = params_acm%HIT_energy * get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xy', 'xyz', params_acm%dim==3))
+        e_kin_set = params_acm%HIT_energy * get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xyz', 'xy ', params_acm%dim==3))
         t_l_inf = 1.0_rk ! sqrt(nu / epsilon), should be adapted to by setting gain
         ! forcing after Bassene konstant energy (2016)
         A_forcing = (params_acm%dissipation - G_gain * (params_acm%e_kin - e_kin_set) / t_l_inf) / (2.0*params_acm%e_kin)
@@ -1814,7 +1814,9 @@ subroutine RHS_scalar(g, Bs, dx, x0, phi, order_discretization, time, rhs, mask,
     real(kind=rk), allocatable, dimension(:) :: FD1_l, FD2
     integer(kind=ik) :: FD1_ls, FD1_le, FD2_s, FD2_e
 
-    real(kind=rk) :: kappa, x, y, z, masksource, nu, R, R0sq, C_eta_apply_inv(0:ncolors), C_sponge_inv
+    real(kind=rk) :: kappa, x, y, z, masksource, nu, R, h_smooth, C_eta_apply_inv(0:ncolors), C_sponge_inv
+    ! exponent of the super-Gaussian used for the "gaussian"/"blob" scalar source mask, see below
+    real(kind=rk), parameter :: SUPER_GAUSSIAN_N = 2.0_rk
     real(kind=rk) :: dx_inv, dy_inv, dz_inv, dx2_inv, dy2_inv, dz2_inv
     real(kind=rk) :: ux, uy, uz, usx, usy, usz, wx, wy, wz, gx, gy, gz, D, chi, &
                      chidx, chidy, chidz, D_dx, D_dy, D_dz, gxx, gyy, gzz
@@ -1873,8 +1875,16 @@ subroutine RHS_scalar(g, Bs, dx, x0, phi, order_discretization, time, rhs, mask,
         source = 0.0_rk
 
         ! 1st: compute source terms (note the strcmp needs to be outside the loop)
+        ! NOTE on forcing strength: the "gaussian"/"blob" and "circular" sources below use
+        ! C_eta_apply_inv(mask(...,5)), i.e. the *fluid* [VPM]::C_eta indexed by the geometry
+        ! color at that point (color 1 = default fluid domain away from any obstacle, since
+        ! color 0 means "no penalization"). This is NOT the per-scalar "C_eta" read from
+        ! [ConvectionDiffusion] into params_acm%scalar_Ceta - that one only sets the diffusivity
+        ! used for the Neumann/no-flux condition inside solid obstacles (see D, D_dx, ... below).
+        ! So the relaxation rate of the Dirichlet source/sink is tied to the wall penalization
+        ! strength, shared by all scalars, and not independently tunable per scalar via ini.
         select case (params_acm%scalar_source_type(iscalar))
-        case ("gaussian")
+        case ("gaussian", "blob")
             do iz = iz1, iz2
                 if (dim == 3) then
                     z = (x0(3) + dble(iz-g-1)*dx(3) - params_acm%z0source(iscalar))**2
@@ -1888,19 +1898,30 @@ subroutine RHS_scalar(g, Bs, dx, x0, phi, order_discretization, time, rhs, mask,
 
                         R = x + y + z ! note this is (x-x0)**2
 
-                        masksource = dexp( -R / (params_acm%widthsource(iscalar)**2)  )
+                        ! super-Gaussian (exponent SUPER_GAUSSIAN_N > 1): stays close to 1 out to
+                        ! roughly r=widthsource and then falls off much faster than a plain Gaussian.
+                        ! This is needed because the visible size of the forced region is set by where
+                        ! masksource/C_eta becomes comparable to the local advection rate, not simply by
+                        ! widthsource: with a plain Gaussian (N=1) that crossover radius overshoots
+                        ! widthsource by a sqrt(log(...)) factor (~2x for typical C_eta). The steeper
+                        ! falloff of the super-Gaussian keeps that overshoot small.
+                        masksource = dexp( -(R / (params_acm%widthsource(iscalar)**2))**SUPER_GAUSSIAN_N )
 
                         if (masksource > 1.0d-6) then
                             ! for the source term, we use the usual dirichlet C_eta
-                            ! to force scalar to 1
-                            source(ix,iy,iz) = (masksource - phi(ix,iy,iz,j)) * C_eta_apply_inv( int(mask(ix,iy,iz,5), kind=2) )
+                            ! to force scalar to valuesource. The relaxation strength itself
+                            ! is scaled by masksource so it smoothly vanishes away from the
+                            ! source center, instead of forcing at full C_eta strength out to
+                            ! the masksource>1e-6 cutoff.
+                            source(ix,iy,iz) = masksource * (params_acm%valuesource(iscalar) - phi(ix,iy,iz,j)) * C_eta_apply_inv( int(mask(ix,iy,iz,5), kind=2) )
                         endif
                     end do
                 end do
             end do
 
         case ("circular")
-            R0sq = params_acm%widthsource(iscalar)**2
+            ! smoothing width of the cosine mask, relative to the source radius
+            h_smooth = 0.2_rk * params_acm%widthsource(iscalar)
             do iz = iz1, iz2
                 if (dim == 3) then
                     z = (x0(3) + dble(iz-g-1)*dx(3) - params_acm%z0source(iscalar))**2
@@ -1914,10 +1935,14 @@ subroutine RHS_scalar(g, Bs, dx, x0, phi, order_discretization, time, rhs, mask,
 
                         R = x + y + z ! note this is (x-x0)**2
 
-                        if ( R <= R0sq ) then
+                        ! smooth cosine mask instead of a hard indicator, to avoid a
+                        ! discontinuous forcing term (and hence sharp gradients in phi)
+                        masksource = step_cosine( dsqrt(R), params_acm%widthsource(iscalar), h_smooth )
+
+                        if (masksource > 1.0d-6) then
                             ! for the source term, we use the usual dirichlet C_eta
-                            ! to force scalar to 1
-                            source(ix,iy,iz) = -(phi(ix,iy,iz,j)-1.d0) * C_eta_apply_inv( int(mask(ix,iy,iz,5), kind=2) )
+                            ! to force scalar to valuesource
+                            source(ix,iy,iz) = masksource * (params_acm%valuesource(iscalar) - phi(ix,iy,iz,j)) * C_eta_apply_inv( int(mask(ix,iy,iz,5), kind=2) )
                         endif
                     end do
                 end do

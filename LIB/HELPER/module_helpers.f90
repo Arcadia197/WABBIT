@@ -743,25 +743,35 @@ contains
 
     ! -------------------------------------------------------------------------------
     ! Sometimes we want to compute domain lengths for computing areas/volumes. However, with cropping, this might not simply map to prduct(domain_size(1:dim)). This is was this routine is for
-    pure function get_active_domain_length(domain_size, crop_min, crop_max, dir, active_length) result(active_length)
+    function get_active_domain_length(domain_size, crop_min, crop_max, dir) result(active_length)
         implicit none
         real(kind=rk), intent(in) :: domain_size(1:3)
         real(kind=rk), intent(in) :: crop_min(1:3)
         real(kind=rk), intent(in) :: crop_max(1:3)
         character(len=*), intent(in) :: dir
-        real(kind=rk), intent(out) :: active_length
+        real(kind=rk) :: active_length
         real(kind=rk) :: len_dir(1:3)
 
         ! Compute the active length in the specified direction, considering cropping
-        len_dir = domain_size(dir) * (crop_max(dir) - crop_min(dir))
+        len_dir = domain_size * (crop_max - crop_min)
         active_length = 0.0_rk
-        if (dir == 'x' .or. dir == '1') active_length = len_dir(1)
-        if (dir == 'y' .or. dir == '2') active_length = len_dir(2)
-        if (dir == 'z' .or. dir == '3') active_length = len_dir(3)
-        if (dir == 'xy' .or. dir == '12') active_length = len_dir(1) * len_dir(2)
-        if (dir == 'xz' .or. dir == '13') active_length = len_dir(1) * len_dir(3)
-        if (dir == 'yz' .or. dir == '23') active_length = len_dir(2) * len_dir(3)
-        if (dir == 'xyz' .or. dir == '123') active_length = len_dir(1) * len_dir(2) * len_dir(3)
+        if (trim(dir) == 'x' .or. trim(dir) == '1') then
+            active_length = len_dir(1)
+        else if (trim(dir) == 'y' .or. trim(dir) == '2') then
+            active_length = len_dir(2)
+        else if (trim(dir) == 'z' .or. trim(dir) == '3') then
+            active_length = len_dir(3)
+        else if (trim(dir) == 'xy' .or. trim(dir) == '12') then
+            active_length = len_dir(1) * len_dir(2)
+        else if (trim(dir) == 'xz' .or. trim(dir) == '13') then
+            active_length = len_dir(1) * len_dir(3)
+        else if (trim(dir) == 'yz' .or. trim(dir) == '23') then
+            active_length = len_dir(2) * len_dir(3)
+        else if (trim(dir) == 'xyz' .or. trim(dir) == '123') then
+            active_length = len_dir(1) * len_dir(2) * len_dir(3)
+        else
+            call abort(260924, "Invalid direction for get_active_domain_length: "//trim(dir))
+        endif
     end function get_active_domain_length
 
 

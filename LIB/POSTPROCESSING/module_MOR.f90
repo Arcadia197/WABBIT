@@ -290,7 +290,7 @@ contains
         end do
 
         ! volume of the domain depends on the cropping of the domain, so we have to take care of that
-        Volume = get_active_domain_length(params%domain_size, params%domain_cropping_min, params%domain_cropping_max, dir=merge('xy', 'xyz', params%dim==3))
+        Volume = get_active_domain_length(params%domain_size, params%domain_cropping_min, params%domain_cropping_max, dir=merge('xyz', 'xy ', params%dim==3))
         ! V is the matrix of eigenvectors
         if (Volume>0.0_rk) then
             a_coefs = a_coefs / Volume
@@ -1076,7 +1076,7 @@ contains
         Bs= params%Bs
         g = params%g
         ! volume of the domain depends on the cropping of the domain, so we have to take care of that
-        Volume = get_active_domain_length(params%domain_size, params%domain_cropping_min, params%domain_cropping_max, dir=merge('xy', 'xyz', params%dim==3))
+        Volume = get_active_domain_length(params%domain_size, params%domain_cropping_min, params%domain_cropping_max, dir=merge('xyz', 'xy ', params%dim==3))
         L2norm = 0.0_rk
         ! Loop over the active hvy_data
         do tree_ID =1, N_snapshots
@@ -1130,7 +1130,7 @@ contains
         N_snapshots = size(C,1)
         rank = params%rank
         ! volume of the domain depends on the cropping of the domain, so we have to take care of that
-        Volume = get_active_domain_length(params%domain_size, params%domain_cropping_min, params%domain_cropping_max, dir=merge('xy', 'xyz', params%dim==3))
+        Volume = get_active_domain_length(params%domain_size, params%domain_cropping_min, params%domain_cropping_max, dir=merge('xyz', 'xy ', params%dim==3))
         ! We loop over all snapshots X_i, i=1,...,N to calculate the values of the symmetric
         ! covariance matrix C_{j,i} = C_{i,j} = <X_i, X_j>
         do tree_ID1 = 1, N_snapshots
@@ -1858,7 +1858,7 @@ contains
             enddo
 
             ! volume of the domain depends on the cropping of the domain, so we have to take care of that
-            Volume = get_active_domain_length(params%domain_size, params%domain_cropping_min, params%domain_cropping_max, dir=merge('xy', 'xyz', params%dim==3))
+            Volume = get_active_domain_length(params%domain_size, params%domain_cropping_min, params%domain_cropping_max, dir=merge('xyz', 'xy ', params%dim==3))
             ! V is the matrix of eigenvectors
             a_coefs = a_coefs / Volume
 

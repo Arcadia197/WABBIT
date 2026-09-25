@@ -131,6 +131,10 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
             params_acm%time_statistics_mean = 0.0_rk
             params_acm%time_statistics_maxabs = 0.0_rk
         endif
+        if (params_acm%use_passive_scalar) then
+            params_acm%scalar_mean = 0.0_rk
+            params_acm%scalar_maxabs = 0.0_rk
+        endif
 
         dx_min = 90.0e9_rk
 
@@ -395,6 +399,14 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
             enddo
         endif
 
+        ! mean and maximum absolute value of each passive scalar
+        if (params_acm%use_passive_scalar) then
+            do k = 1, params_acm%N_scalars
+                params_acm%scalar_mean(k) = params_acm%scalar_mean(k) + dV * sum( u(x1:x2, y1:y2, z1:z2, params_acm%dim+1+k) )
+                params_acm%scalar_maxabs(k) = max( params_acm%scalar_maxabs(k), maxval(abs(u(x1:x2, y1:y2, z1:z2, params_acm%dim+1+k))) )
+            enddo
+        endif
+
     case ("post_stage")
         !-------------------------------------------------------------------------
         ! 3rd stage: post_stage.
@@ -404,7 +416,7 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
         ! mean flow (in entire domain)
         ! mean depends on volume depends on the cropping of the domain, so we have to take care of that
         call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%mean_flow, 3, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
-        params_acm%mean_flow = params_acm%mean_flow / get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xy', 'xyz', params_acm%dim==3))
+        params_acm%mean_flow = params_acm%mean_flow / get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xyz', 'xy ', params_acm%dim==3))
 
         if (params_acm%use_channel_forcing) then
             ! mean flow but only in fluid domain
@@ -481,8 +493,16 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
         ! mean depends on volume depends on the cropping of the domain, so we have to take care of that
         if (params_acm%time_statistics) then
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%time_statistics_mean, params_acm%n_time_statistics, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
-            params_acm%time_statistics_mean = params_acm%time_statistics_mean / get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xy', 'xyz', params_acm%dim==3))
+            params_acm%time_statistics_mean = params_acm%time_statistics_mean / get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xyz', 'xy ', params_acm%dim==3))
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%time_statistics_maxabs, params_acm%n_time_statistics, MPI_DOUBLE_PRECISION, MPI_MAX, WABBIT_COMM, mpierr)
+        endif
+
+        ! passive scalar statistics
+        ! mean depends on volume depends on the cropping of the domain, so we have to take care of that
+        if (params_acm%use_passive_scalar) then
+            call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%scalar_mean, params_acm%N_scalars, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
+            params_acm%scalar_mean = params_acm%scalar_mean / get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xyz', 'xy ', params_acm%dim==3))
+            call MPI_ALLREDUCE(MPI_IN_PLACE, params_acm%scalar_maxabs, params_acm%N_scalars, MPI_DOUBLE_PRECISION, MPI_MAX, WABBIT_COMM, mpierr)
         endif
 
         umag = params_acm%umag
@@ -637,17 +657,23 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
             ! turbulent statistics - these are normed by the volume, which depends on the cropping of the domain!
             if (params_acm%nu*params_acm%enstrophy > 0.0_rk .and. params_acm%HIT_linear_forcing) then
                 ! dissipation = 2*params_acm%nu*params_acm%enstrophy/product(params_acm%domain_size(1:params_acm%dim))
-                dissipation = params_acm%dissipation/get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xy', 'xyz', params_acm%dim==3))
-                u_RMS = sqrt(2.0_rk*params_acm%e_kin/get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xy', 'xyz', params_acm%dim==3))/3.0_rk)
-                call append_t_file( 'turbulent_statistics.t', (/time, dissipation, params_acm%e_kin/get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xy', 'xyz', params_acm%dim==3))
-                    (params_acm%nu**3.0_rk / dissipation)**0.25_rk, sqrt(params_acm%nu/dissipation), (params_acm%nu*dissipation)**0.25_rk, &
-                    sqrt(15.0_rk*params_acm%nu*u_RMS**2/dissipation), sqrt(15.0_rk*params_acm%nu*u_RMS**2/dissipation)*u_RMS/params_acm%nu/))
+                dissipation = params_acm%dissipation/get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xyz', 'xy ', params_acm%dim==3))
+                u_RMS = sqrt(2.0_rk*params_acm%e_kin/get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xyz', 'xy ', params_acm%dim==3))/3.0_rk)
+                call append_t_file( 'turbulent_statistics.t', (/time, dissipation, params_acm%e_kin/get_active_domain_length(params_acm%domain_size, params_acm%domain_cropping_min, params_acm%domain_cropping_max, dir=merge('xyz', 'xy ', params_acm%dim==3)), u_RMS, &
+                (params_acm%nu**3.0_rk / dissipation)**0.25_rk, sqrt(params_acm%nu/dissipation), (params_acm%nu*dissipation)**0.25_rk, &
+                sqrt(15.0_rk*params_acm%nu*u_RMS**2/dissipation), sqrt(15.0_rk*params_acm%nu*u_RMS**2/dissipation)*u_RMS/params_acm%nu/))
             endif
 
             ! time statistics
             if (params_acm%time_statistics) then
                 call append_t_file( 'time_statistics_mean.t', (/time, params_acm%time_statistics_mean/) )
                 call append_t_file( 'time_statistics_maxabs.t', (/time, params_acm%time_statistics_maxabs/) )
+            endif
+
+            ! passive scalar statistics
+            if (params_acm%use_passive_scalar) then
+                call append_t_file( 'scalar_mean.t', (/time, params_acm%scalar_mean/) )
+                call append_t_file( 'scalar_maxabs.t', (/time, params_acm%scalar_maxabs/) )
             endif
 
             ! this file is to simply keep track of simulations, should they be restarted with different parameters.
