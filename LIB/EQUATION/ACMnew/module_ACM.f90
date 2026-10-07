@@ -60,7 +60,15 @@ module module_acm
     ! linear forcing
     logical :: HIT_linear_forcing = .false., skew_symmetry=.false.
     real(kind=rk) :: HIT_energy = 1.0_rk
-    real(kind=rk) :: HIT_gain = 100.0_rk
+    real(kind=rk) :: HIT_gain = 5.0_rk
+    ! pressure compensation for linear forcing: add -A*p to the pressure equation, so the
+    ! acoustic (divergent) modes are not amplified by the forcing (see linear-forcing study)
+    logical :: HIT_pressure_compensation = .true.
+    ! fixed forcing coefficient A (testing only): if >= 0, A = HIT_A_fixed instead of the
+    ! constant-energy formula
+    real(kind=rk) :: HIT_A_fixed = -1.0_rk
+    ! last value of the forcing coefficient A (diagnostics only)
+    real(kind=rk) :: HIT_A_forcing = 0.0_rk
 
     logical :: use_energy_limiter = .false.
     real(kind=rk) :: energy_start = -1.0_rk
@@ -243,7 +251,9 @@ contains
     call read_param_mpi(FILE, 'ACM-new', 'compute_flow', params_acm%compute_flow, .true. )
     call read_param_mpi(FILE, 'ACM-new', 'HIT_linear_forcing', params_acm%HIT_linear_forcing, .false. )
     call read_param_mpi(FILE, 'ACM-new', 'HIT_energy', params_acm%HIT_energy, 1.0_rk )
-    call read_param_mpi(FILE, 'ACM-new', 'HIT_gain', params_acm%HIT_gain, 100.0_rk )
+    call read_param_mpi(FILE, 'ACM-new', 'HIT_gain', params_acm%HIT_gain, 5.0_rk )
+    call read_param_mpi(FILE, 'ACM-new', 'HIT_pressure_compensation', params_acm%HIT_pressure_compensation, .true. )
+    call read_param_mpi(FILE, 'ACM-new', 'HIT_A_fixed', params_acm%HIT_A_fixed, -1.0_rk )
     call read_param_mpi(FILE, 'ACM-new', 'p_eqn_model', params_acm%p_eqn_model, "acm" )
     call read_param_mpi(FILE, 'ACM-new', 'skew_symmetry', params_acm%skew_symmetry, .false. )
 
@@ -719,6 +729,12 @@ contains
     ! sponge
     if (params_acm%use_sponge) dt = min( dt, params_acm%CFL_eta*params_acm%C_sponge )
 
+    ! HIT linear forcing: the constant-energy controller relaxes E with rate HIT_gain, i.e.
+    ! dE/dt = ... - G (E - E*). Explicit RK is unstable for G*dt > ~2 (RK2) - 2.79 (RK4).
+    if (params_acm%HIT_linear_forcing .and. params_acm%HIT_gain > 0.0_rk) then
+        dt = min( dt, params_acm%CFL_eta * 2.0_rk / params_acm%HIT_gain )
+    endif
+
   end subroutine GET_DT_BLOCK_ACM
 
 
@@ -831,6 +847,8 @@ contains
       if (params_acm%HIT_linear_forcing) then
         call init_t_file('turbulent_statistics.t', overwrite, (/"           time", "    dissipation", "         energy", "          u_RMS", &
       "    kolm_length", "      kolm_time", "  kolm_velocity", "   taylor_micro", "reynolds_taylor"/))
+        call init_t_file('forcing.t', overwrite, (/"           time", "      A_forcing", "    e_kin_stats", &
+      "     diss_stats"/))
       endif
       call init_t_file('CFL.t', overwrite, (/&
       "           time", &

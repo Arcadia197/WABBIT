@@ -54,7 +54,7 @@ subroutine RHS_NSPP( time, u, g, x0, dx, rhs, mask, stage, n_domain, discretizat
     character(len=cshort), intent(in), optional :: discretization_overwrite
 
 
-    real(kind=rk), allocatable, save :: vor(:,:,:,:)
+    real(kind=rk), allocatable, save :: diss_rate(:,:,:)
     integer(kind=ik) :: mpierr, i, dim, ix, iy, iz
     integer(kind=ik), dimension(3) :: Bs
     real(kind=rk) :: tmp(1:3), tmp2, dV, dV2, penal(1:3), C_eta_apply_inv(0:ncolors), x, y, z, f_block(1:3)
@@ -112,7 +112,7 @@ subroutine RHS_NSPP( time, u, g, x0, dx, rhs, mask, stage, n_domain, discretizat
         ! rate at all times, so compute that, if we use the forcing.
         if (params_nspp%HIT_linear_forcing) then
             params_nspp%e_kin = 0.0_rk
-            params_nspp%enstrophy = 0.0_rk
+            params_nspp%dissipation = 0.0_rk
             params_nspp%mean_flow = 0.0_rk
         endif
 
@@ -158,10 +158,11 @@ subroutine RHS_NSPP( time, u, g, x0, dx, rhs, mask, stage, n_domain, discretizat
         ! Linear Forcing for HIT (Lundgren) requires us to know kinetic energy and dissipation
         ! rate at all times, so compute that, if we use the forcing.
         if (params_nspp%HIT_linear_forcing) then
-            ! vorticity work array
-            if (.not. allocated(vor) ) allocate(vor(1:size(u,1), 1:size(u,2), 1:size(u,3), 1:3 ))
-            ! to compute the current dissipation rate
-            call compute_vorticity(u(:,:,:,1:3), dx, Bs, g, discretization, vor(:,:,:,:))
+            ! dissipation rate eps = -nu*int u.lap(u), computed with the same FD2 stencil as the viscous
+            ! term of the RHS, so it equals the kinetic energy removed by viscosity (also in ACM, where
+            ! it includes nu*int (div u)^2). compute_dissipation returns u.lap(u) on interior points.
+            if (.not. allocated(diss_rate) ) allocate(diss_rate(1:size(u,1), 1:size(u,2), 1:size(u,3)))
+            call compute_dissipation(u(:,:,:,1:params_nspp%dim), dx, Bs, g, discretization, diss_rate)
 
 
 
@@ -169,10 +170,10 @@ subroutine RHS_NSPP( time, u, g, x0, dx, rhs, mask, stage, n_domain, discretizat
             params_nspp%mean_flow(2) = params_nspp%mean_flow(2) + dv*sum(u(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g, 2))
             if (params_nspp%dim==2) then
                 params_nspp%e_kin = params_nspp%e_kin + 0.5_rk*dv*sum(u(g+1:Bs(1)+g, g+1:Bs(2)+g,    :       , 1:params_nspp%dim)**2)
-                params_nspp%enstrophy = params_nspp%enstrophy + 0.5_rk*dv*sum(vor(g+1:Bs(1)+g, g+1:Bs(2)+g,    :       , 1)**2)
+                params_nspp%dissipation = params_nspp%dissipation - params_nspp%nu*dv*sum(diss_rate(g+1:Bs(1)+g, g+1:Bs(2)+g, 1))
             else
                 params_nspp%e_kin = params_nspp%e_kin + 0.5_rk*dv*sum(u(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g, 1:params_nspp%dim)**2)
-                params_nspp%enstrophy = params_nspp%enstrophy + 0.5_rk*dv*sum(vor(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g, 1:3)**2)
+                params_nspp%dissipation = params_nspp%dissipation - params_nspp%nu*dv*sum(diss_rate(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g))
                 params_nspp%mean_flow(3) = params_nspp%mean_flow(3) + dv*sum(u(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g, 3))
             endif
 
@@ -230,14 +231,13 @@ subroutine RHS_NSPP( time, u, g, x0, dx, rhs, mask, stage, n_domain, discretizat
         ! mean depends on volume depends on the cropping of the domain, so we have to take care of that
         if (params_nspp%HIT_linear_forcing) then
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%e_kin, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
-            call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%enstrophy, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
+            call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%dissipation, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
             call MPI_ALLREDUCE(MPI_IN_PLACE, params_nspp%mean_flow, 3, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr)
 
             ! Domain cropping. The computational domain can be cropped, i.e., we solve the PDE only in a portion of it.
             ! Then, the volume of the cropped computational changes and is no longer product(domain). 
             params_nspp%mean_flow = params_nspp%mean_flow / product(params_nspp%domainSizeCropped(1:params_nspp%dim))
 
-            params_nspp%dissipation = params_nspp%enstrophy * params_nspp%nu
         endif
 
         if (params_nspp%use_free_flight_solver) then

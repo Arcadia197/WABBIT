@@ -58,7 +58,7 @@ module module_nspp
     ! linear forcing
     logical :: HIT_linear_forcing = .false., skew_symmetry=.false.
     real(kind=rk) :: HIT_energy = 1.0_rk
-    real(kind=rk) :: HIT_gain = 100.0_rk
+    real(kind=rk) :: HIT_gain = 5.0_rk
 
     ! channel flow
     logical :: use_channel_forcing = .false.
@@ -233,7 +233,7 @@ contains
     call read_param_mpi(FILE, 'NSPP', 'compute_flow', params_nspp%compute_flow, .true. )
     call read_param_mpi(FILE, 'NSPP', 'HIT_linear_forcing', params_nspp%HIT_linear_forcing, .false. )
     call read_param_mpi(FILE, 'NSPP', 'HIT_energy', params_nspp%HIT_energy, 1.0_rk )
-    call read_param_mpi(FILE, 'NSPP', 'HIT_gain', params_nspp%HIT_gain, 100.0_rk )
+    call read_param_mpi(FILE, 'NSPP', 'HIT_gain', params_nspp%HIT_gain, 5.0_rk )
     call read_param_mpi(FILE, 'NSPP', 'skew_symmetry', params_nspp%skew_symmetry, .false. )
 
     ! channel flow
@@ -699,6 +699,12 @@ contains
 
     ! sponge
     if (params_nspp%use_sponge) dt = min( dt, params_nspp%CFL_eta*params_nspp%C_sponge )
+
+    ! HIT linear forcing: the constant-energy controller relaxes E with rate HIT_gain, i.e.
+    ! dE/dt = ... - G (E - E*). Explicit RK is unstable for G*dt > ~2 (RK2) - 2.79 (RK4).
+    if (params_nspp%HIT_linear_forcing .and. params_nspp%HIT_gain > 0.0_rk) then
+        dt = min( dt, params_nspp%CFL_eta * 2.0_rk / params_nspp%HIT_gain )
+    endif
 
   end subroutine GET_DT_BLOCK_NSPP
 

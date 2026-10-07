@@ -678,11 +678,15 @@ subroutine STATISTICS_ACM( time, dt, u, g, x0, dx, stage, work, mask )
 
                 call append_t_file( 'turbulent_statistics.t', (/time, dissipation, &
                      params_acm%e_kin / product(params_acm%domainSizeCropped(1:params_acm%dim)), &
+                     u_RMS, &
                      (params_acm%nu**3.0_rk / dissipation)**0.25_rk, &
                      sqrt(params_acm%nu/dissipation), &
                      (params_acm%nu*dissipation)**0.25_rk, &
                      sqrt(15.0_rk*params_acm%nu*u_RMS**2/dissipation), &
                      sqrt(15.0_rk*params_acm%nu*u_RMS**2/dissipation)*u_RMS/params_acm%nu/) )
+            endif
+            if (params_acm%HIT_linear_forcing) then
+                call append_t_file( 'forcing.t', (/time, params_acm%HIT_A_forcing, params_acm%e_kin, params_acm%dissipation/) )
             endif
 
             ! time statistics

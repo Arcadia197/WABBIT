@@ -147,11 +147,11 @@ subroutine pressure_from_velocity(params, time, hvy_block, hvy_tmp, hvy_mask, tr
     real(kind=rk), intent(in)          :: time
     real(kind=rk), intent(inout)       :: hvy_block(:, :, :, :, :)
     real(kind=rk), intent(inout)       :: hvy_tmp(:, :, :, :, :)
-    real(kind=rk), intent(in)          :: hvy_mask(:, :, :, :, :)
+    real(kind=rk), intent(inout)       :: hvy_mask(:, :, :, :, :)
     integer(kind=ik), intent(in)       :: tree_ID
     logical, intent(in), optional      :: force_convergence  !< enforce stricter convergence by using fixed iterations
 
-    integer(kind=ik) :: k, hvy_id, lgt_id, Bs(1:3), g, g_RHS
+    integer(kind=ik) :: k, hvy_id, hvy_id_mask, lgt_id, Bs(1:3), g, g_RHS
     real(kind=rk) :: x0(1:3), dx(1:3)
     integer(kind=2), dimension(3) :: n_domain
     character(len=cshort) :: format_string, saved_cycle_end_criteria
@@ -161,7 +161,8 @@ subroutine pressure_from_velocity(params, time, hvy_block, hvy_tmp, hvy_mask, tr
     Bs = params%Bs
     g  = params%g
     g_RHS = params%g_RHS  ! could optimize synching, but I'm not sure if g_RHS is always correct for post functions
-    
+    n_domain = 0  ! only set for blocks at non-periodic boundaries below, as in RHS_wrapper
+
     do_force_convergence = .false.
     if (present(force_convergence)) do_force_convergence = force_convergence
     
@@ -177,13 +178,58 @@ subroutine pressure_from_velocity(params, time, hvy_block, hvy_tmp, hvy_mask, tr
     ! Step 1: Compute velocity RHS (nonlinear + viscous terms, no pressure)
     ! Use the local_stage from the physics module
     !---------------------------------------------------------------------------
+    ! NOTE: we cannot go through RHS_wrapper here (which would automatically handle
+    ! createMask_tree, the hvy_id_mask clamp below, init/integral/post_stage, etc.) -
+    ! RHS_wrapper lives in module_time_step, which itself "use module_mesh", and this
+    ! subroutine lives inside module_mesh (via poisson_operations.f90's #include) - so
+    ! calling it here would be a circular module dependency. Call RHS_meta directly instead.
+    ! Of the steps RHS_wrapper performs after the local stage, none is needed here: the NSPP
+    ! projection is done below, the channel/HIT mean removal does not change div(RHS).
     call sync_ghosts_tree(params, hvy_block(:,:,:,1:params%dim,:), tree_ID)
-    
+
+    ! RHS_meta/rhs_2d_acm always reads hvy_mask (chi, usx, usy, usz, color), but unlike a normal
+    ! timestep - which always goes through RHS_wrapper, and RHS_wrapper always calls
+    ! createMask_tree first (see LIB/TIME/RHS_wrapper.f90) - we call RHS_meta directly here and
+    ! skip that, so hvy_mask would otherwise still hold whatever garbage was last in that memory.
+    call createMask_tree(params, time, hvy_mask, hvy_tmp)
+
     ! Zero out pressure field to avoid including pressure gradient in RHS
     do k = 1, hvy_n(tree_ID)
         hvy_id = hvy_active(k, tree_ID)
         hvy_block(:,:,:,params%dim+1,hvy_id) = 0.0_rk
     enddo
+
+    ! The local stage uses global quantities (e.g. e_kin, dissipation and mean_flow for the linear forcing),
+    ! which are computed in the init/integral/post stages. Run them here, as RHS_wrapper does, so that
+    ! they belong to the current field and are not zero (first call) or stale (left from the last RK stage).
+    ! init_stage and post_stage are called once, not for each block: pass any block and set x0=dx=0
+    x0 = 0.0_rk
+    dx = 0.0_rk
+    call RHS_meta(params%physics_type, time, hvy_block(:,:,:,1:params%n_eqn_rhs,1), g, x0, dx, &
+             hvy_tmp(:,:,:,1:params%n_eqn_rhs,1), hvy_mask(:,:,:,:,1), "init_stage")
+
+    do k = 1, hvy_n(tree_ID)
+        hvy_id = hvy_active(k, tree_ID)
+        call hvy2lgt(lgt_id, hvy_id, params%rank, params%number_blocks)
+        call get_block_spacing_origin(params, lgt_id, x0, dx)
+
+        if ( .not. All(params%periodic_BC) ) then
+            ! check if block is adjacent to a boundary of the domain, if this is the case we use one sided stencils
+            call get_adjacent_boundary_surface_normal( params, lgt_id, n_domain )
+        endif
+
+        hvy_id_mask = hvy_id
+        if (size(hvy_mask,5) == 1) hvy_id_mask = 1
+
+        call RHS_meta(params%physics_type, time, hvy_block(:,:,:,1:params%n_eqn_rhs,hvy_id), g, x0, dx, &
+                 hvy_tmp(:,:,:,1:params%n_eqn_rhs,hvy_id), hvy_mask(:,:,:,:,hvy_id_mask), &
+                 "integral_stage", n_domain)
+    enddo
+
+    x0 = 0.0_rk
+    dx = 0.0_rk
+    call RHS_meta(params%physics_type, time, hvy_block(:,:,:,1:params%n_eqn_rhs,1), g, x0, dx, &
+             hvy_tmp(:,:,:,1:params%n_eqn_rhs,1), hvy_mask(:,:,:,:,1), "post_stage")
 
     ! compute RHS of momentum equation, needed for RHS of pressure-poisson equation
     do k = 1, hvy_n(tree_ID)
@@ -195,11 +241,17 @@ subroutine pressure_from_velocity(params, time, hvy_block, hvy_tmp, hvy_mask, tr
             ! check if block is adjacent to a boundary of the domain, if this is the case we use one sided stencils
             call get_adjacent_boundary_surface_normal( params, lgt_id, n_domain )
         endif
-        
+
+        ! the hvy_mask array is allocated even if the mask is not used, it has then the size (1,1,1,1,1)
+        ! (a single point). Therefore, pay attention not to pass hvy_mask(:,:,:,:,hvy_id) with hvy_id>1.
+        ! Note: hvy_mask is not used in this case by the RHS routines... (same idiom as RHS_wrapper.f90)
+        hvy_id_mask = hvy_id
+        if (size(hvy_mask,5) == 1) hvy_id_mask = 1
+
         ! Call the physics RHS with "local_stage" to compute dU/dt without pressure gradient
         ! we'd ideally just love to compute the velocity equations of the RHS for ACM or NSPP but ACM will always compute pressure RHS as well - we'll simply ignore it
         call RHS_meta(params%physics_type, time, hvy_block(:,:,:,1:params%n_eqn_rhs,hvy_id), g, x0, dx, &
-                 hvy_tmp(:,:,:,1:params%n_eqn_rhs,hvy_id), hvy_mask(:,:,:,:,hvy_id), &
+                 hvy_tmp(:,:,:,1:params%n_eqn_rhs,hvy_id), hvy_mask(:,:,:,:,hvy_id_mask), &
                  "local_stage", n_domain, params%poisson_order)
     enddo
 

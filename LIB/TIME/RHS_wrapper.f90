@@ -198,7 +198,7 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
             ! RHS_meta will compute the divergence and store it in the first component of hvy_block
 
             call RHS_meta( params%physics_type, time, hvy_block(:,:,:,:,hvy_id), g, x0, dx, &
-             hvy_rhs(:,:,:,:,hvy_id), hvy_mask(:,:,:,:,hvy_id), "divergence_stage", n_domain )
+             hvy_rhs(:,:,:,:,hvy_id), hvy_mask(:,:,:,:,hvy_id_mask), "divergence_stage", n_domain )
         enddo
         call toc( "RHS_wrapper::divergence-stage", 10036, MPI_wtime()-t1 )
 
