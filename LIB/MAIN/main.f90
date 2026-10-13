@@ -150,6 +150,10 @@ program main
         write(*, '("")')
     end if
 
+    ! The unit tests must not write to the t-files. Otherwise rows with fake times end up
+    ! at the start of every run, e.g. eps_norm.t got time=1,2 from the adapt_tree calls in
+    ! unit_test_waveletDecomposition_invertibility. Buffered rows would even survive init_t_file.
+    call disable_all_t_files_output()
 
     if (params%test_treecode) then
        call unit_test_treecode( params, hvy_block, hvy_work, hvy_tmp, tree_ID_flow, abort_on_fail=.true. )
@@ -168,6 +172,8 @@ program main
         call unit_test_waveletDecomposition_invertibility( params, hvy_block, hvy_work, hvy_tmp, tree_ID_flow )
     endif
 
+    call enable_all_t_files_output()
+
     ! timing
     call toc( "TOPLEVEL: unit tests", 17, MPI_wtime()-sub_t0 )
     sub_t0 = MPI_Wtime()
@@ -185,16 +191,25 @@ program main
     !*******************************************************************
     if (params%physics_type == "NSPP" .or. params%inicond_helmholtz_projection) then
         t4 = MPI_wtime()
-        call helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID_flow, force_convergence=.true.)
+        call helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID_flow, force_convergence=.true., diagnostics=.true.)
 
         if (params%physics_type == "ACM-new") then
             ! we have changed the velocity, thus we need to update the pressure field for ACM as well to be consistent.
             call pressure_from_velocity(params, time, hvy_block, hvy_tmp, hvy_mask, tree_ID_flow, force_convergence=.true.)
         endif
         call toc( "TOPLEVEL: Helmholtz projection", 19, MPI_wtime()-t4)
+    elseif (params%physics_type == "ACM-new" .and. params%read_from_files .and. params%inicond_pressure_from_velocity) then
+        ! velocity read from file is kept as it is (e.g. projected externally), only p is recomputed from it
+        t4 = MPI_wtime()
+        call pressure_from_velocity(params, time, hvy_block, hvy_tmp, hvy_mask, tree_ID_flow, force_convergence=.true.)
+        call toc( "TOPLEVEL: pressure from velocity", 19, MPI_wtime()-t4)
     endif
 
-    if ((.not. params%read_from_files .or. params%adapt_inicond).and.(time+1e-12_rk>params%write_time_first)) then
+    ! if the IC was read from file but then altered by the Helmholtz projection (or p recomputed), save it as well, so
+    ! the projected IC is available on disk (e.g. run with time_max=0 to use WABBIT as a projection pre-processor)
+    if ((.not. params%read_from_files .or. params%adapt_inicond .or. params%inicond_helmholtz_projection &
+        .or. (params%read_from_files .and. params%inicond_pressure_from_velocity)) &
+        .and.(time+1e-12_rk>params%write_time_first)) then
         ! NOTE: new versions (>16/12/2017) call physics module routines call prepare_save_data. These
         ! routines create the fields to be stored in the work array hvy_work in the first 1:params%N_fields_saved
         ! slots. the state vector (hvy_block) is copied if desired.

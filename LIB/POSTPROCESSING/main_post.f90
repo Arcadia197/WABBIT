@@ -181,6 +181,9 @@ program main_post
     case ("--proto-pressure-multigrid")
         call proto_pressure_multigrid(params)
 
+    case ("--proto-projection-krylov")
+        call proto_projection_krylov(params)
+
     case ("--proto-NSI-EE")
         call proto_NSI_EE(params)
     

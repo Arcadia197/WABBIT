@@ -23,15 +23,16 @@ subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagn
     logical, intent(in), optional      :: diagnostics
     logical, intent(in), optional      :: force_convergence  !< enforce stricter convergence by using fixed iterations
 
-    integer(kind=ik) :: k, hvy_id, lgt_id, Bs(1:3), g, g_RHS
+    integer(kind=ik) :: k, hvy_id, lgt_id, Bs(1:3), g(1:3), g_RHS
     real(kind=rk) :: x0(1:3), dx(1:3), div_max, div_rms, div_sum
     integer(kind=ik) :: mpicode
-    logical :: do_diagnostics, do_force_convergence
+    logical :: do_diagnostics, do_force_convergence, sync_rhs
     character(len=cshort) :: saved_cycle_end_criteria
     integer(kind=ik) :: saved_cycle_it
 
     Bs = params%Bs
     g  = params%g
+    if (params%dim == 2) g(3) = 0
     g_RHS = params%g_RHS
     do_diagnostics = .false.
     if (present(diagnostics)) do_diagnostics = diagnostics
@@ -47,15 +48,24 @@ subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagn
         params%poisson_cycle_it = max(15, params%poisson_cycle_it)
     endif
 
+    ! exact modes with poisson_exact_sync_rhs: D uses the RK-stage sync, so that the divergence removed here is the one
+    ! the RK stages and div.t see (for lifted wavelets sync_ghosts_tree restricts with the wavelet low-pass)
+    sync_rhs = params%poisson_exact_projection .and. params%poisson_exact_sync_rhs
+
     !---------------------------------------------------------------------------
     ! Step 1: Compute divergence -> hvy_tmp(:,:,:,1:,:)
     !---------------------------------------------------------------------------
-    call sync_ghosts_tree(params, hvy_block(:,:,:,1:params%dim,:), tree_ID)
+    ! sync velocity
+    if (sync_rhs) then
+        call sync_ghosts_RHS_tree(params, hvy_block(:,:,:,1:params%dim,:), tree_ID, g_minus=g_RHS, g_plus=g_RHS)
+    else
+        call sync_ghosts_tree(params, hvy_block(:,:,:,1:params%dim,:), tree_ID)
+    endif
     do k = 1, hvy_n(tree_ID)
         hvy_id = hvy_active(k, tree_ID)
         call hvy2lgt(lgt_id, hvy_id, params%rank, params%number_blocks)
         call get_block_spacing_origin(params, lgt_id, x0, dx)
-        call compute_divergence(hvy_block(:,:,:,1:params%dim,hvy_id), dx, Bs, g, &
+        call compute_divergence(hvy_block(:,:,:,1:params%dim,hvy_id), dx, Bs, g(1), &
                                 params%poisson_order, hvy_tmp(:,:,:,1,hvy_id))
     enddo
 
@@ -66,25 +76,28 @@ subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagn
             hvy_id = hvy_active(k, tree_ID)
             call hvy2lgt(lgt_id, hvy_id, params%rank, params%number_blocks)
             call get_block_spacing_origin(params, lgt_id, x0, dx)
-            div_max = max(div_max, maxval(abs(hvy_tmp(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g, 1, hvy_id))))
-            div_sum = div_sum + sum(hvy_tmp(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g, 1, hvy_id)**2) * product(dx(1:params%dim))
+            div_max = max(div_max, maxval(abs(hvy_tmp(g(1)+1:Bs(1)+g(1), g(2)+1:Bs(2)+g(2), g(3)+1:Bs(3)+g(3), 1, hvy_id))))
+            div_sum = div_sum + sum(hvy_tmp(g(1)+1:Bs(1)+g(1), g(2)+1:Bs(2)+g(2), g(3)+1:Bs(3)+g(3), 1, hvy_id)**2) * product(dx(1:params%dim))
         enddo
         call MPI_ALLREDUCE(MPI_IN_PLACE, div_max, 1, MPI_DOUBLE_PRECISION, MPI_MAX, WABBIT_COMM, mpicode)
         call MPI_ALLREDUCE(MPI_IN_PLACE, div_sum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpicode)
 
 
         ! Domain cropping. The computational domain can be cropped, i.e., we solve the PDE only in a portion of it.
-        ! Then, the volume of the cropped computational changes and is no longer product(domain). 
+        ! Then, the volume of the cropped computational changes and is no longer product(domain).
         div_rms = sqrt(div_sum / product(params%domainSizeCropped(1:params%dim)))
 
         if (params%rank == 0) write(*,'("Helmholtz: before projection max|div(u)|=", es12.4, " RMS=", es12.4)') div_max, div_rms
     endif
 
     !---------------------------------------------------------------------------
-    ! Step 2: Solve Laplacian(phi) = div(u)  ->  hvy_tmp(:,:,:,1,:)
-    ! Multigrid solver does synching before and after solve
+    ! Step 2: Solve Laplacian(phi) = div(u)  ->  hvy_tmp(:,:,:,2,:)
+    ! Multigrid solver does synching before and after solve. With poisson_exact_projection on adaptive grids, the
+    ! operator is D G instead of L, so that div(u - grad(phi)) is the solver residual. The Krylov vectors of that
+    ! solve use the remaining slots of hvy_tmp
     !---------------------------------------------------------------------------
-    call multigrid_solve(params, hvy_tmp(:,:,:,2:2,:), hvy_tmp(:,:,:,1:1,:), hvy_tmp(:,:,:,3:3,:), tree_ID, init_0=.true., hvy_full=hvy_tmp, verbose=.false., time=time)
+    call projection_solve(params, hvy_tmp, 2, 1, 3, (/ (k, k = 4, size(hvy_tmp,4)) /), tree_ID, params%poisson_order, &
+        sync_rhs=sync_rhs, init_0=.true., time=time)
 
     !---------------------------------------------------------------------------
     ! Step 3: Correct velocity: u := u - grad(phi)
@@ -93,28 +106,33 @@ subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagn
         hvy_id = hvy_active(k, tree_ID)
         call hvy2lgt(lgt_id, hvy_id, params%rank, params%number_blocks)
         call get_block_spacing_origin(params, lgt_id, x0, dx)
-        call subtract_scalar_gradient(hvy_block(:,:,:,1:params%dim,hvy_id), dx, Bs, g, &
+        call subtract_scalar_gradient(hvy_block(:,:,:,1:params%dim,hvy_id), dx, Bs, g(1), &
                                       params%poisson_order, hvy_tmp(:,:,:,2,hvy_id))
     enddo
 
     if (do_diagnostics) then
-        call sync_ghosts_tree(params, hvy_block(:,:,:,1:params%dim,:), tree_ID)
+        ! sync velocity
+        if (sync_rhs) then
+            call sync_ghosts_RHS_tree(params, hvy_block(:,:,:,1:params%dim,:), tree_ID, g_minus=g_RHS, g_plus=g_RHS)
+        else
+            call sync_ghosts_tree(params, hvy_block(:,:,:,1:params%dim,:), tree_ID)
+        endif
         div_max = 0.0_rk
         div_sum = 0.0_rk
         do k = 1, hvy_n(tree_ID)
             hvy_id = hvy_active(k, tree_ID)
             call hvy2lgt(lgt_id, hvy_id, params%rank, params%number_blocks)
             call get_block_spacing_origin(params, lgt_id, x0, dx)
-            call compute_divergence(hvy_block(:,:,:,1:params%dim,hvy_id), dx, Bs, g, &
+            call compute_divergence(hvy_block(:,:,:,1:params%dim,hvy_id), dx, Bs, g(1), &
                                     params%poisson_order, hvy_tmp(:,:,:,1,hvy_id))
-            div_max = max(div_max, maxval(abs(hvy_tmp(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g, 1, hvy_id))))
-            div_sum = div_sum + sum(hvy_tmp(g+1:Bs(1)+g, g+1:Bs(2)+g, g+1:Bs(3)+g, 1, hvy_id)**2) * product(dx(1:params%dim))
+            div_max = max(div_max, maxval(abs(hvy_tmp(g(1)+1:Bs(1)+g(1), g(2)+1:Bs(2)+g(2), g(3)+1:Bs(3)+g(3), 1, hvy_id))))
+            div_sum = div_sum + sum(hvy_tmp(g(1)+1:Bs(1)+g(1), g(2)+1:Bs(2)+g(2), g(3)+1:Bs(3)+g(3), 1, hvy_id)**2) * product(dx(1:params%dim))
         enddo
         call MPI_ALLREDUCE(MPI_IN_PLACE, div_max, 1, MPI_DOUBLE_PRECISION, MPI_MAX, WABBIT_COMM, mpicode)
         call MPI_ALLREDUCE(MPI_IN_PLACE, div_sum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpicode)
-        
+
         ! Domain cropping. The computational domain can be cropped, i.e., we solve the PDE only in a portion of it.
-        ! Then, the volume of the cropped computational changes and is no longer product(domain). 
+        ! Then, the volume of the cropped computational changes and is no longer product(domain).
         div_rms = sqrt( div_sum / product(params%domainSizeCropped(1:params%dim)) )
 
         if (params%rank == 0) write(*,'("Helmholtz: after projection  max|div(u)|=", es12.4, " RMS=", es12.4)') div_max, div_rms

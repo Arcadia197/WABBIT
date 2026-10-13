@@ -208,7 +208,26 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
         ! MultiGrid solve, we sync before and after in multigrid_solve
         ! Logic here: We can reuse the latest solution as initialization if the grid is equidistant and we are sure it is the same as before
         t1 = MPI_wtime()
-        call multigrid_solve(params, hvy_block(:,:,:,params%dim+1:params%dim+1,:), hvy_block(:,:,:,1:1,:), hvy_block(:,:,:,2:2,:), tree_ID, init_0=.not.(is_equidistant .and. (stage > 1 .or. (stage == 1 .and. .not. params%adapt_tree))), verbose=.false., hvy_full=hvy_block, time=time)
+        if (params%poisson_exact_stages) then
+            ! exact projection of the RHS: solve D G p = D rhs with the stage's own D (RHS sync, NSPP stencils), so that
+            ! the pressure gradient removes the divergence of the RHS up to the solver residual. All vectors of that
+            ! solve must lie in one array that the V-cycle may load-balance: hvy_tmp, which is free during the stage.
+            ! b and p are copied there, and p back
+            do k = 1, hvy_n(tree_ID)
+                hvy_id = hvy_active(k, tree_ID)
+                hvy_tmp(:,:,:,1,hvy_id) = hvy_block(:,:,:,1,hvy_id)
+                hvy_tmp(:,:,:,2,hvy_id) = hvy_block(:,:,:,params%dim+1,hvy_id)
+            enddo
+            call projection_solve(params, hvy_tmp, 2, 1, 3, (/ (k, k = 4, size(hvy_tmp,4)) /), tree_ID, &
+                params_nspp%discretization, sync_rhs=.true., &
+                init_0=.not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree))), time=time)
+            do k = 1, hvy_n(tree_ID)
+                hvy_id = hvy_active(k, tree_ID)
+                hvy_block(:,:,:,params%dim+1,hvy_id) = hvy_tmp(:,:,:,2,hvy_id)
+            enddo
+        else
+            call multigrid_solve(params, hvy_block(:,:,:,params%dim+1:params%dim+1,:), hvy_block(:,:,:,1:1,:), hvy_block(:,:,:,2:2,:), tree_ID, init_0=.not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree))), verbose=.false., hvy_full=hvy_block, time=time)
+        endif
 
         ! ! debug save
         ! call saveHDF5_tree("phi_0.h5", 0.0_rk, 0, params%dim+1, params, hvy_block(:,:,:,:,:), tree_ID, no_sync=.false.)

@@ -31,7 +31,7 @@ module module_t_files
     PRIVATE
 
 
-    PUBLIC :: init_t_file, append_t_file, close_all_t_files, disable_all_t_files_output
+    PUBLIC :: init_t_file, append_t_file, close_all_t_files, disable_all_t_files_output, enable_all_t_files_output
 
 contains
 
@@ -40,6 +40,12 @@ contains
     subroutine disable_all_t_files_output()
         implicit none
         disable_all_output = .true.
+    end subroutine
+
+    ! Re-enables the output after disable_all_t_files_output, e.g. after the unit tests
+    subroutine enable_all_t_files_output()
+        implicit none
+        disable_all_output = .false.
     end subroutine
 
 

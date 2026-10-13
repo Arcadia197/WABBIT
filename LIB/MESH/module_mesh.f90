@@ -34,6 +34,7 @@ contains
 
 ! Poisson solver tree-level operations (absorbed from module_poisson to avoid circular dependency)
 #include "multigrid_vcycle.f90"
+#include "projection_solve.f90"
 #include "poisson_operations.f90"
 
 ! Mesh operations

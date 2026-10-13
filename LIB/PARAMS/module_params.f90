@@ -102,6 +102,13 @@ module module_params
         integer(kind=ik)      :: poisson_Sync_it=0
         character(len=cshort) :: poisson_coarsest="FFT", poisson_order_predictor="not-initialized"
         logical               :: poisson_balanceLoad=.false.
+        ! exact projection on adaptive grids (projection_solve): solve D G phi = D u instead of L phi = D u
+        ! poisson_exact_projection ini: 0 off, 1 exact in RK stages and helmholtz_projection, 2 exact only in helmholtz_projection
+        logical               :: poisson_exact_projection=.false.  !< helmholtz_projection (modes 1, 2)
+        logical               :: poisson_exact_stages=.false.      !< NSPP RK stage solve (mode 1)
+        logical               :: poisson_exact_sync_rhs=.false.    !< helmholtz_projection: D with the RK sync (D_RHS)
+        integer(kind=ik)      :: poisson_exact_m=2, poisson_exact_sweeps=2
+        real(kind=rk)         :: poisson_exact_switch=0.3_rk
         integer(kind=ik) :: nprojection_NSI = 1 !> let's do regular projections every nprojection_NSI time steps
         character(len=cshort) :: FFT_accuracy="spectral"  ! FD or spectral
         character(len=cshort) :: refinement_indicator="everywhere"

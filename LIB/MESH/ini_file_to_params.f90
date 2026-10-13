@@ -10,6 +10,7 @@ subroutine ini_file_to_params( params, filename )
    integer(kind=ik)                                :: rank
    ! number of processes
    integer(kind=ik)                                :: number_procs
+    integer(kind=ik)                                :: poisson_exact_mode
    ! inifile structure
    type(inifile)                                   :: FILE
    ! maximum memory available on all cpus
@@ -89,11 +90,16 @@ subroutine ini_file_to_params( params, filename )
       call read_param_mpi(FILE, 'Physics', 'input_files', params%input_files, params%input_files, check_file_exists=.true. )
    else
       call read_param_mpi(FILE, 'Physics', 'inicond_vorticity_formulation', params%inicond_vorticity_formulation, .false.)
-      if (params%physics_type == "ACM-new") then
-         call read_param_mpi(FILE, 'Physics', 'inicond_pressure_from_velocity', params%inicond_pressure_from_velocity, params%inicond_vorticity_formulation)
-      endif
-      call read_param_mpi(FILE, 'Physics', 'inicond_helmholtz_projection', params%inicond_helmholtz_projection, .false.)
    endif
+   ! also for a velocity read from files: then only p is recomputed from it (main.f90), e.g. if the velocity was
+   ! projected externally and must not be touched by helmholtz_projection again
+   if (params%physics_type == "ACM-new") then
+      call read_param_mpi(FILE, 'Physics', 'inicond_pressure_from_velocity', params%inicond_pressure_from_velocity, params%inicond_vorticity_formulation)
+   endif
+   ! independent of how the IC was obtained (read from files or an analytic formula), it may not
+   ! be discretely divergence-free (e.g. a field mapped onto an adaptive grid via grid1-to-grid2 is
+   ! not, since that's a per-component wavelet low-pass, not a divergence-preserving operator)
+   call read_param_mpi(FILE, 'Physics', 'inicond_helmholtz_projection', params%inicond_helmholtz_projection, .false.)
 
    ! wabbit does need to know how many fiels are written to disk when saving is triggered.
    ! e.g. saving ux, uy and p would mean 3. The names of these files as well as their contents
@@ -167,6 +173,14 @@ subroutine ini_file_to_params( params, filename )
    call read_param_mpi(FILE, 'Discretization', 'poisson_Sync_it', params%poisson_Sync_it, 2)
    call read_param_mpi(FILE, 'Discretization', 'poisson_coarsest', params%poisson_coarsest, "FFT")
    call read_param_mpi(FILE, 'Discretization', 'poisson_balanceLoad', params%poisson_balanceLoad, .false.)
+   call read_param_mpi(FILE, 'Discretization', 'poisson_exact_projection', poisson_exact_mode, 0_ik)
+   if (poisson_exact_mode < 0 .or. poisson_exact_mode > 2) call abort(261010, "poisson_exact_projection must be 0, 1 or 2")
+   params%poisson_exact_projection = (poisson_exact_mode >= 1)
+   params%poisson_exact_stages = (poisson_exact_mode == 1)
+   call read_param_mpi(FILE, 'Discretization', 'poisson_exact_sync_rhs', params%poisson_exact_sync_rhs, .false.)
+   call read_param_mpi(FILE, 'Discretization', 'poisson_exact_switch', params%poisson_exact_switch, 0.3_rk)
+   call read_param_mpi(FILE, 'Discretization', 'poisson_exact_m', params%poisson_exact_m, 2)
+   call read_param_mpi(FILE, 'Discretization', 'poisson_exact_sweeps', params%poisson_exact_sweeps, 2)
    call read_param_mpi(FILE, 'Discretization', 'nprojection_NSI', params%nprojection_NSI, 1)
    call read_param_mpi(FILE, 'Discretization', 'FFT_accuracy', params%FFT_accuracy, "spectral")
 

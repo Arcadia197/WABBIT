@@ -114,7 +114,8 @@ contains
         real(kind=rk), intent(in)    :: line_i(:)
         real(kind=rk), intent(inout) :: line_o(:)
         integer(kind=ik), intent(in) :: i0, i1, level_local
-        real(kind=rk), intent(in)    :: HD(:), GD(:)
+        ! keep the filter offsets (e.g. HD(-6:6)): an assumed-shape dummy HD(:) would start at 1
+        real(kind=rk), intent(in)    :: HD(lbound(params%HD, 1):), GD(lbound(params%GD, 1):)
 
         integer(kind=ik) :: i, j, idx, stride, parent_step, child_step
         real(kind=rk) :: acc
@@ -272,7 +273,8 @@ contains
         real(kind=rk), intent(in)    :: line_i(:)
         real(kind=rk), intent(inout) :: line_o(:)
         integer(kind=ik), intent(in) :: i0, i1, level_local
-        real(kind=rk), intent(in)    :: HR(:), GR(:)
+        ! keep the filter offsets (e.g. HR(-3:3)): an assumed-shape dummy HR(:) would start at 1
+        real(kind=rk), intent(in)    :: HR(lbound(params%HR, 1):), GR(lbound(params%GR, 1):)
 
         integer(kind=ik) :: i, j, idx, stride, parent_step, child_step
         real(kind=rk) :: acc
