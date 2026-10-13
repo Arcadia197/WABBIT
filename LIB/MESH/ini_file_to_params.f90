@@ -475,6 +475,18 @@ subroutine ini_blocks(params, FILE )
             CDFX = 4
             CDFY = 4
          endif
+         if (params%wavelet == "coiflet6") then
+            CDFX = 2
+            CDFY = 2
+         endif
+         if (params%wavelet == "coiflet18") then
+            CDFX = 6
+            CDFY = 6
+         endif
+         if (params%wavelet == "coiflet24") then
+            CDFX = 8
+            CDFY = 8
+         endif
    else
       read(params%wavelet(4:4), *) CDFX
       ! Thomas will probably hate me for paving the way for 10th and 12th order wavelets, but well...

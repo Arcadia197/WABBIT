@@ -96,11 +96,23 @@ subroutine post_unit_test(params)
     if (Bs == -1) then
         ! we set BS to minimum for each wavelet, but first we have to read in the wavelet
         if (params%wavelet(1:3) /= "CDF") then
-            if (params%wavelet == "coiflet12") then
+            if (params%wavelet == "coiflet6") then
+                CDFX = 2
+                CDFY = 2
+            elseif (params%wavelet == "coiflet12") then
                 CDFX = 4
                 CDFY = 4
-                Bs = 16  ! Let's just set this to 16 for now
+            elseif (params%wavelet == "coiflet18") then
+                CDFX = 6
+                CDFY = 6
+            elseif (params%wavelet == "coiflet24") then
+                CDFX = 8
+                CDFY = 8
             endif
+            ! coiflets have g = CDFX+CDFY-1 = 3, 7, 11, 15 (largest filter half-width, setup_wavelet), one more than a
+            ! lifted CDF wavelet with the same X and Y. Adaptive grids need g < (Bs+1)/2 in integer arithmetic
+            ! (module_mpi), i.e. Bs >= 2g+2: Bs = 8, 16, 24, 32
+            if (params%wavelet(1:7) == "coiflet") Bs = (CDFX + CDFY) * 2
         else
             read(params%wavelet(4:4), *) CDFX
             ! Thomas will probably hate me for paving the way for 10th and 12th order wavelets, but well...

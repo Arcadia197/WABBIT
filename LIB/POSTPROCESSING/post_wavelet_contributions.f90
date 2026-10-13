@@ -7,6 +7,7 @@ subroutine post_wavelet_contributions(params)
     use module_forestMetaData
     use module_wavelets
     use module_hdf5_wrapper
+    use, intrinsic :: ieee_arithmetic
 
     implicit none
 
@@ -25,6 +26,8 @@ subroutine post_wavelet_contributions(params)
     integer(kind=ik), external         :: count_div2
     integer(kind=ik)                   :: pos_underscore, pos_dot
     logical                            :: norms_only
+    ! level and box energies from the wavelet coefficients (Parseval), without reconstruction
+    logical                            :: coef_energies
     logical                            :: use_box
     logical                            :: logical_has_extent, logical_has_end
     real(kind=rk), dimension(3)        :: box_origin, box_extent, box_end
@@ -103,6 +106,12 @@ subroutine post_wavelet_contributions(params)
             write(*,'(A)') "                     Box 0 is the full level contribution u_j. For every box, the table also"
             write(*,'(A)') "                     holds the L2 norm of u_j and the inner product int(u_box*u_j). 1/2*int(u_box*u_j)"
             write(*,'(A)') "                     splits the energy additively among boxes (cross terms are shared equally)"
+            write(*,'(A)') " --coefficient-energies - Energies from the wavelet coefficients alone (Parseval), no reconstruction:"
+            write(*,'(A)') "                     much less memory and time. Exact for orthogonal wavelets (coiflets), also on"
+            write(*,'(A)') "                     adaptive grids; for CDF wavelets the numbers are NOT the energies of u_j."
+            write(*,'(A)') "                     A coefficient belongs to a box if its grid point lies in the box. The table holds"
+            write(*,'(A)') "                     L2 = sqrt(E), inner_box_full = E (box energies add up exactly), other norms NaN."
+            write(*,'(A)') "                     Implies --norms-only, not with --sub0-levels."
             write(*,'(A)') "-----------------------------------------------------------"
         end if
         return
@@ -142,6 +151,11 @@ subroutine post_wavelet_contributions(params)
     call get_cmd_arg( "--box-end-z", box_end_cmd(3), default=-1.0_rk )
     call get_cmd_arg( "--box-file", box_file, default="" )
     call get_cmd_arg( "--table-file", table_file, default="" )
+    call get_cmd_arg_bool( "--coefficient-energies", coef_energies, default=.false. )
+    if (coef_energies) then
+        if (sub0_levels /= 0) call abort(260124_ik, "--coefficient-energies does not support --sub0-levels")
+        norms_only = .true.
+    endif
 
     ! initialize wavelet transform
     ! also, set number of ghost nodes params%G to minimal value for this wavelet
@@ -226,8 +240,15 @@ subroutine post_wavelet_contributions(params)
     params%Bs = Bs
     allocate(params%butcher_tableau(1,1))
 
-    params%useCoarseExtension = params%isLiftedWavelet
+    ! Coarse extension at coarse-fine interfaces: for the lifted CDF wavelets and the coiflets (whose SC are filtered
+    ! values too; on adaptive test grids it reduces their level-energy error from up to 57 % to 2 %). Not for coefficient
+    ! energies, which are read off the decomposition: coarse extension would delete coefficients at the interfaces
+    ! (-2 % at the finest level with, 0.2 % per level without).
+    params%useCoarseExtension = (params%isLiftedWavelet .or. params%wavelet(1:7) == "coiflet") .and. .not. coef_energies
     params%useSecurityZone = params%isLiftedWavelet
+    if (coef_energies .and. params%wavelet(1:7) /= "coiflet" .and. params%rank == 0) then
+        write(*,'(A)') "WARNING: --coefficient-energies with a biorthogonal wavelet: the numbers are not the energies of u_j"
+    endif
 
     allocate(params%threshold_state_vector_component(1:params%n_eqn))
     params%threshold_state_vector_component = 1
@@ -244,13 +265,14 @@ subroutine post_wavelet_contributions(params)
     idx_coef = -1
     idx_full = -1
     ! for norms-only, we can skip reloading, as we do not need to prune: keep the decomposition
-    if (norms_only) then
+    ! (coefficient energies need neither the copy nor the box slots: hvy_tmp is only used by the decomposition)
+    if (norms_only .and. .not. coef_energies) then
         idx_dec = hvy_tmp_neqn
         hvy_tmp_neqn = hvy_tmp_neqn + nc
     endif
     ! with boxes, keep the coefficients of the current contribution (restored for every box) and the
     ! full level contribution u_j (for the inner product)
-    if (n_boxes > 0) then
+    if (n_boxes > 0 .and. .not. coef_energies) then
         idx_coef = hvy_tmp_neqn
         idx_full = hvy_tmp_neqn + nc
         hvy_tmp_neqn = hvy_tmp_neqn + 2*nc
@@ -269,7 +291,7 @@ subroutine post_wavelet_contributions(params)
         write(*,'(A)') "Performing wavelet decomposition..."
     endif
     call wavelet_decompose_full_tree(params, hvy_block, tree_ID, hvy_tmp)
-    if (norms_only) call copy_block_tmp(idx_dec, to_tmp=.true.)
+    if (norms_only .and. .not. coef_energies) call copy_block_tmp(idx_dec, to_tmp=.true.)
 
     ! determine active level range
     Jmin_active = minActiveLevel_tree(tree_ID)
@@ -326,8 +348,11 @@ subroutine post_wavelet_contributions(params)
     endif
     call open_table()
 
-    ! loop over all active levels
+    if (coef_energies) call output_coefficient_energies()
+
+    ! loop over all active levels (not with coefficient energies, which need no reconstruction)
     do target_level = params%Jmin, Jmax_active
+        if (coef_energies) exit
         if (params%rank == 0) then
             write(*,'(A,I0,A,I0)') "Processing level ", target_level, " / ", Jmax_active
         endif
@@ -511,6 +536,105 @@ contains
             enddo
         endif
 
+    end subroutine
+
+    !> Level (and box) energies from the wavelet coefficients alone (Parseval), without any reconstruction.
+    !> For an orthogonal wavelet, u_j = sum_k d_k psi_k has ||u_j||^2 = sum_k d_k^2 (orthonormal filters). With the
+    !> normalisation used in WABBIT (HD sums to 1, see setup_wavelet), a coefficient carries a factor 2^(-1/2) for every
+    !> direction in which it was low-pass filtered, and the volume element is that of its level, so
+    !>     ||u_j||^2 = sum_{WC of level j} c^2 * 2^n_even * dx_j^dim,
+    !> with n_even the number of directions in which the coefficient sits on a SC position. A coefficient belongs to a box
+    !> if its grid point lies in the box (closed box, as in apply_local_box_filter), so box energies add up exactly.
+    !> hvy_block holds the full-tree decomposition; every block of level j holds the coefficients of level j.
+    subroutine output_coefficient_energies()
+        implicit none
+        integer(kind=ik) :: k_loc, hvy_id_loc, lgt_id_loc, lvl, i_comp, ix_loc, iy_loc, iz_loc, n_even, mpierr_loc, i_dim
+        real(kind=rk) :: x0_loc(3), dx_loc(3), w, xyz(3), c, nan_val
+        real(kind=rk) :: norms(1:nc,1:7)
+        real(kind=rk), allocatable :: e(:,:,:)
+        integer(kind=ik), allocatable :: nnz(:,:,:)
+        logical, allocatable :: box_hit(:)
+
+        allocate(e(1:nc, 0:n_boxes, params%Jmin:Jmax_active), nnz(1:nc, 0:n_boxes, params%Jmin:Jmax_active))
+        allocate(box_hit(1:n_boxes))
+        e = 0.0_rk
+        nnz = 0_ik
+        xyz = 0.0_rk
+
+        do k_loc = 1, hvy_n(tree_ID)
+            hvy_id_loc = hvy_active(k_loc, tree_ID)
+            call hvy2lgt(lgt_id_loc, hvy_id_loc, params%rank, params%number_blocks)
+            lvl = lgt_block(lgt_id_loc, IDX_MESH_LVL)
+            if (lvl < params%Jmin) cycle
+            call get_block_spacing_origin(params, lgt_id_loc, x0_loc, dx_loc)
+
+            ! boxes that overlap this block at all
+            do i_box = 1, n_boxes
+                box_hit(i_box) = .true.
+                do i_dim = 1, params%dim
+                    if (x0_loc(i_dim) + dble(Bs(i_dim)-1)*dx_loc(i_dim) < box_lo(i_dim, i_box) .or. &
+                        x0_loc(i_dim) > box_hi(i_dim, i_box)) box_hit(i_box) = .false.
+                enddo
+            enddo
+
+            do iz_loc = merge(1, g+1, params%dim==2), merge(1, Bs(3)+g, params%dim==2)
+                do iy_loc = g+1, Bs(2)+g
+                    do ix_loc = g+1, Bs(1)+g
+                        n_even = 0
+                        if (mod(ix_loc,2) == even_odd) n_even = n_even + 1
+                        if (mod(iy_loc,2) == even_odd) n_even = n_even + 1
+                        if (params%dim == 3 .and. mod(iz_loc,2) == even_odd) n_even = n_even + 1
+                        ! scaling coefficient
+                        if (n_even == params%dim) cycle
+
+                        w = 2.0_rk**n_even * product(dx_loc(1:params%dim))
+                        xyz(1) = x0_loc(1) + dble(ix_loc-(g+1)) * dx_loc(1)
+                        xyz(2) = x0_loc(2) + dble(iy_loc-(g+1)) * dx_loc(2)
+                        if (params%dim == 3) xyz(3) = x0_loc(3) + dble(iz_loc-(g+1)) * dx_loc(3)
+
+                        do i_comp = 1, nc
+                            c = hvy_block(ix_loc, iy_loc, iz_loc, i_comp, hvy_id_loc)
+                            e(i_comp, 0, lvl) = e(i_comp, 0, lvl) + c**2 * w
+                            if (abs(c) > 1.0e-12_rk) nnz(i_comp, 0, lvl) = nnz(i_comp, 0, lvl) + 1
+                            do i_box = 1, n_boxes
+                                if (.not. box_hit(i_box)) cycle
+                                if (all(xyz(1:params%dim) >= box_lo(1:params%dim, i_box) .and. &
+                                        xyz(1:params%dim) <= box_hi(1:params%dim, i_box))) then
+                                    e(i_comp, i_box, lvl) = e(i_comp, i_box, lvl) + c**2 * w
+                                    if (abs(c) > 1.0e-12_rk) nnz(i_comp, i_box, lvl) = nnz(i_comp, i_box, lvl) + 1
+                                endif
+                            enddo
+                        enddo
+                    enddo
+                enddo
+            enddo
+        enddo
+        call MPI_ALLREDUCE(MPI_IN_PLACE, e, size(e), MPI_DOUBLE_PRECISION, MPI_SUM, WABBIT_COMM, mpierr_loc)
+        call MPI_ALLREDUCE(MPI_IN_PLACE, nnz, size(nnz), MPI_INTEGER4, MPI_SUM, WABBIT_COMM, mpierr_loc)
+
+        nan_val = ieee_value(nan_val, ieee_quiet_nan)
+        if (params%rank == 0) write(*,'(A)') "Level energies from the wavelet coefficients (--coefficient-energies, no reconstruction):"
+        do lvl = params%Jmin, Jmax_active
+            do i_box = 0, n_boxes
+                norms = nan_val
+                norms(:,2) = sqrt(e(:, i_box, lvl))
+                call write_rows(lvl, 0_ik, i_box, norms, sqrt(e(:, 0, lvl)), e(:, i_box, lvl), nnz(:, i_box, lvl))
+            enddo
+            if (params%rank == 0) then
+                ! same line as in finalize_and_output, log parsers match it exactly
+                write(*,'(A,I0,A,I0)') "  Level ", lvl, " / ", Jmax_active
+                if (nc == 1 .and. n_boxes == 0) then
+                    write(*,'(A,es16.8)') "    L2 norm:     ", sqrt(e(1, 0, lvl))
+                    write(*,'(A,I0)')     "    Non-zero wavelets: ", nnz(1, 0, lvl)
+                else
+                    do i_field = 1, nc
+                        write(*,'(A,I0,A,es16.8,A,I0)') "    field ", i_field, ": full-level L2 norm ", sqrt(e(i_field, 0, lvl)), &
+                            ", non-zero wavelets ", nnz(i_field, 0, lvl)
+                    enddo
+                    if (n_boxes > 0) write(*,'(A,I0,A)') "    ", n_boxes, " boxes, see table"
+                endif
+            endif
+        enddo
     end subroutine
 
     !> Reconstruct the contribution currently held in hvy_block (coefficients) to physical space.
@@ -877,6 +1001,11 @@ contains
         write(table_unit,'(A)') "% sublevel 0 = regular level contribution; level 0 with sublevel s = sub0 sub-level s (--sub0-levels)"
         write(table_unit,'(A)') "% L3 is signed ((sum u^3)^(1/3) with the sign kept); L2_full = L2 norm of u_j;"
         write(table_unit,'(A)') "% inner_box_full = int(u_box*u_j) dV (box 0: L2^2); n_nonzero = non-zero wavelet coefficients"
+        if (coef_energies) then
+            write(table_unit,'(A)') "% --coefficient-energies: E = sum over the wavelet coefficients of the level in the box of c^2*2^n_even*dx_j^dim"
+            write(table_unit,'(A)') "% (Parseval, no reconstruction): L2 = sqrt(E), L2_full = sqrt(E of box 0), inner_box_full = E; other norms NaN."
+            write(table_unit,'(A)') "% Exact energies of u_j and u_box for orthogonal wavelets only."
+        endif
         write(table_unit,'(A7,";",A6,";",A6,";",A9,";",9(A24,";"),A12)') "% field", "box", "level", "sublevel", "L1", "L2", "L3", &
             "L4", "Linf", "H1", "mean", "L2_full", "inner_box_full", "n_nonzero"
     end subroutine

@@ -1110,6 +1110,115 @@ contains
                 write(*,*) "Warning: COIFLET12 is not yet fully tested and implemented, do not use for production runs!"
             enddo
 
+        case ("coiflet6")
+            ! coiflet with 6 taps (L=1): orthogonal, almost interpolating; psi has 2 vanishing moments, phi 1.
+            ! Low-pass h derived from the defining conditions (Daubechies, Ten Lectures, Sec. 8.2), offsets -2..3 as coiflet12;
+            ! HR(j) = HD(-j), GD(j) = (-1)^j HD(-j), GR(j) = GD(-j) (the layout of coiflet12 above).
+            ! Same open issues as coiflet12 (refinement by polynomial interpolation, coarse extension). Not for production runs.
+            allocate(params%HD(-2:3))
+            allocate(params%GD(-3:2))
+            allocate(params%HR(-3:2))
+            allocate(params%GR(-2:3))
+            params%HD(:) = (/ &
+                -7.2732619512526436D-02,  3.3789766245748215D-01,  8.5257202021160050D-01,  3.8486484686485711D-01, &
+                -7.2732619512526436D-02, -1.5655728135791646D-02 /)
+            params%GD(:) = (/ &
+                 1.5655728135791646D-02, -7.2732619512526436D-02, -3.8486484686485711D-01,  8.5257202021160050D-01, &
+                -3.3789766245748215D-01, -7.2732619512526436D-02 /)
+            params%HR(:) = (/ &
+                -1.5655728135791646D-02, -7.2732619512526436D-02,  3.8486484686485711D-01,  8.5257202021160050D-01, &
+                 3.3789766245748215D-01, -7.2732619512526436D-02 /)
+            params%GR(:) = (/ &
+                -7.2732619512526436D-02, -3.3789766245748215D-01,  8.5257202021160050D-01, -3.8486484686485711D-01, &
+                -7.2732619512526436D-02,  1.5655728135791646D-02 /)
+            params%order_predictor = "multiresolution_2nd"
+            params%poisson_order_predictor = "multiresolution_4th"
+            CDFX = 2  ! quasi-interpolating of order 2
+            CDFY = 2
+            if (params%rank == 0) write(*,*) "Warning: COIFLET6 is experimental (like COIFLET12), do not use for production runs!"
+
+        case ("coiflet18")
+            ! coiflet with 18 taps (L=3): orthogonal, almost interpolating; psi has 6 vanishing moments, phi 5.
+            ! Low-pass h derived from the defining conditions (Daubechies, Ten Lectures, Sec. 8.2), offsets -6..11 as coiflet12;
+            ! HR(j) = HD(-j), GD(j) = (-1)^j HD(-j), GR(j) = GD(-j) (the layout of coiflet12 above).
+            ! Same open issues as coiflet12 (refinement by polynomial interpolation, coarse extension). Not for production runs.
+            allocate(params%HD(-6:11))
+            allocate(params%GD(-11:6))
+            allocate(params%HR(-11:6))
+            allocate(params%GR(-6:11))
+            params%HD(:) = (/ &
+                -3.7935128644084703D-03,  7.7825964257211225D-03,  2.3452696142217486D-02, -6.5771911281754275D-02, &
+                -6.1123390003233698D-02,  4.0517690240981286D-01,  7.9377722262625694D-01,  4.2848347637647577D-01, &
+                -7.1799821619060220D-02, -8.2301927105663530D-02,  3.4555027573083985D-02,  1.5880544863435854D-02, &
+                -9.0079761366083661D-03, -2.5745176881028075D-03,  1.1175187708066315D-03,  4.6621695981866263D-04, &
+                -7.0983302506661344D-05, -3.4599773196090472D-05 /)
+            params%GD(:) = (/ &
+                 3.4599773196090472D-05, -7.0983302506661344D-05, -4.6621695981866263D-04,  1.1175187708066315D-03, &
+                 2.5745176881028075D-03, -9.0079761366083661D-03, -1.5880544863435854D-02,  3.4555027573083985D-02, &
+                 8.2301927105663530D-02, -7.1799821619060220D-02, -4.2848347637647577D-01,  7.9377722262625694D-01, &
+                -4.0517690240981286D-01, -6.1123390003233698D-02,  6.5771911281754275D-02,  2.3452696142217486D-02, &
+                -7.7825964257211225D-03, -3.7935128644084703D-03 /)
+            params%HR(:) = (/ &
+                -3.4599773196090472D-05, -7.0983302506661344D-05,  4.6621695981866263D-04,  1.1175187708066315D-03, &
+                -2.5745176881028075D-03, -9.0079761366083661D-03,  1.5880544863435854D-02,  3.4555027573083985D-02, &
+                -8.2301927105663530D-02, -7.1799821619060220D-02,  4.2848347637647577D-01,  7.9377722262625694D-01, &
+                 4.0517690240981286D-01, -6.1123390003233698D-02, -6.5771911281754275D-02,  2.3452696142217486D-02, &
+                 7.7825964257211225D-03, -3.7935128644084703D-03 /)
+            params%GR(:) = (/ &
+                -3.7935128644084703D-03, -7.7825964257211225D-03,  2.3452696142217486D-02,  6.5771911281754275D-02, &
+                -6.1123390003233698D-02, -4.0517690240981286D-01,  7.9377722262625694D-01, -4.2848347637647577D-01, &
+                -7.1799821619060220D-02,  8.2301927105663530D-02,  3.4555027573083985D-02, -1.5880544863435854D-02, &
+                -9.0079761366083661D-03,  2.5745176881028075D-03,  1.1175187708066315D-03, -4.6621695981866263D-04, &
+                -7.0983302506661344D-05,  3.4599773196090472D-05 /)
+            params%order_predictor = "multiresolution_6th"
+            params%poisson_order_predictor = "multiresolution_8th"
+            CDFX = 6  ! quasi-interpolating of order 6
+            CDFY = 6
+            if (params%rank == 0) write(*,*) "Warning: COIFLET18 is experimental (like COIFLET12), do not use for production runs!"
+
+        case ("coiflet24")
+            ! coiflet with 24 taps (L=4): orthogonal, almost interpolating; psi has 8 vanishing moments, phi 7.
+            ! Low-pass h derived from the defining conditions (Daubechies, Ten Lectures, Sec. 8.2), offsets -8..15 as coiflet12;
+            ! HR(j) = HD(-j), GD(j) = (-1)^j HD(-j), GR(j) = GD(-j) (the layout of coiflet12 above).
+            ! Same open issues as coiflet12 (refinement by polynomial interpolation, coarse extension). Not for production runs.
+            allocate(params%HD(-8:15))
+            allocate(params%GD(-15:8))
+            allocate(params%HR(-15:8))
+            allocate(params%GR(-8:15))
+            params%HD(:) = (/ &
+                 8.9231390268550061D-04, -1.6294924254799240D-03, -7.3461679373170224D-03,  1.6068947133566259D-02, &
+                 2.6682304672655324D-02, -8.1266710256018601D-02, -5.6077319608026921D-02,  4.1530842701397414D-01, &
+                 7.8223893442699866D-01,  4.3438603309830498D-01, -6.6627472365577561D-02, -9.6220424523682152D-02, &
+                 3.9334422602117856D-02,  2.5082253332161020D-02, -1.5211728185040683D-02, -5.6582837985573956D-03, &
+                 3.7514346961426658D-03,  1.2665610786793762D-03, -5.8902022444642227D-04, -2.5997433707166512D-04, &
+                 6.2338854293165287D-05,  3.1229861585260055D-05, -3.2596479369977937D-06, -1.7849909137426908D-06 /)
+            params%GD(:) = (/ &
+                 1.7849909137426908D-06, -3.2596479369977937D-06, -3.1229861585260055D-05,  6.2338854293165287D-05, &
+                 2.5997433707166512D-04, -5.8902022444642227D-04, -1.2665610786793762D-03,  3.7514346961426658D-03, &
+                 5.6582837985573956D-03, -1.5211728185040683D-02, -2.5082253332161020D-02,  3.9334422602117856D-02, &
+                 9.6220424523682152D-02, -6.6627472365577561D-02, -4.3438603309830498D-01,  7.8223893442699866D-01, &
+                -4.1530842701397414D-01, -5.6077319608026921D-02,  8.1266710256018601D-02,  2.6682304672655324D-02, &
+                -1.6068947133566259D-02, -7.3461679373170224D-03,  1.6294924254799240D-03,  8.9231390268550061D-04 /)
+            params%HR(:) = (/ &
+                -1.7849909137426908D-06, -3.2596479369977937D-06,  3.1229861585260055D-05,  6.2338854293165287D-05, &
+                -2.5997433707166512D-04, -5.8902022444642227D-04,  1.2665610786793762D-03,  3.7514346961426658D-03, &
+                -5.6582837985573956D-03, -1.5211728185040683D-02,  2.5082253332161020D-02,  3.9334422602117856D-02, &
+                -9.6220424523682152D-02, -6.6627472365577561D-02,  4.3438603309830498D-01,  7.8223893442699866D-01, &
+                 4.1530842701397414D-01, -5.6077319608026921D-02, -8.1266710256018601D-02,  2.6682304672655324D-02, &
+                 1.6068947133566259D-02, -7.3461679373170224D-03, -1.6294924254799240D-03,  8.9231390268550061D-04 /)
+            params%GR(:) = (/ &
+                 8.9231390268550061D-04,  1.6294924254799240D-03, -7.3461679373170224D-03, -1.6068947133566259D-02, &
+                 2.6682304672655324D-02,  8.1266710256018601D-02, -5.6077319608026921D-02, -4.1530842701397414D-01, &
+                 7.8223893442699866D-01, -4.3438603309830498D-01, -6.6627472365577561D-02,  9.6220424523682152D-02, &
+                 3.9334422602117856D-02, -2.5082253332161020D-02, -1.5211728185040683D-02,  5.6582837985573956D-03, &
+                 3.7514346961426658D-03, -1.2665610786793762D-03, -5.8902022444642227D-04,  2.5997433707166512D-04, &
+                 6.2338854293165287D-05, -3.1229861585260055D-05, -3.2596479369977937D-06,  1.7849909137426908D-06 /)
+            params%order_predictor = "multiresolution_8th"
+            params%poisson_order_predictor = "multiresolution_10th"
+            CDFX = 8  ! quasi-interpolating of order 8
+            CDFY = 8
+            if (params%rank == 0) write(*,*) "Warning: COIFLET24 is experimental (like COIFLET12), do not use for production runs!"
+
         case default
             !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             ! Cohen-Daubechies-Feauveau Wavelets (CDF) -- interpolating, biorthogonal
@@ -1314,6 +1423,20 @@ contains
                 params%poisson_order_predictor = "multiresolution_12th"
             endif
         end select
+
+        ! Coiflets are given orthonormal (low-pass filters sum to sqrt(2)). WABBIT keeps point values on every level and
+        ! treats the values of a block as its scaling coefficients (SC). This needs the normalisation of the CDF wavelets:
+        ! decomposition low-pass HD summing to 1, reconstruction low-pass HR summing to 2. Coiflets are almost interpolating,
+        ! so their SC then approximate point values, and coarse and fine blocks match on adaptive grids. Without the rescaling,
+        ! the SC of a fine region are 2^(dim/2) times larger per level than the point values of a coarse neighbour, and level
+        ! energies on adaptive grids were off by up to a factor 25. HD and HR are scaled inversely, so the projections onto the
+        ! levels and all results on equidistant grids are unchanged.
+        ! They stay "unlifted" here: marking them lifted (coarse extension in adapt) breaks adapt(adapt(u)) = adapt(u)
+        ! (--wavelet-decomposition-invertibility-test); --wavelet-contributions switches coarse extension on itself.
+        if (params%wavelet(1:7) == "coiflet") then
+            params%HD = params%HD / sqrt(2.0_rk)
+            params%HR = params%HR * sqrt(2.0_rk)
+        endif
 
         ! retrieve FD operator stencil sizes as needed for some setups, use h_ntilde as dummy variable and i,j as temporary integers
         if (params%order_discretization /= "not-initialized") then
