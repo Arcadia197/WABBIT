@@ -83,16 +83,16 @@ subroutine post_extract_slice(params)
     call get_cmd_arg("--pos", str_pos)
     call get_cmd_arg("--dim", str_dim)
     call get_cmd_arg("--output", fname_out)
-    if (.not. allocated(str_pos)) call abort(260707, "--pos must be given")
-    if (.not. allocated(str_dim)) call abort(260707, "--dim must be given")
+    if (.not. allocated(str_pos)) call abort(261014, "--pos must be given")
+    if (.not. allocated(str_dim)) call abort(261014, "--dim must be given")
     n_slices = size(str_pos)
     if (.not. allocated(fname_out)) then
-        if (n_slices /= 1) call abort(260708, "--output must list one file per slice")
+        if (n_slices /= 1) call abort(261014, "--output must list one file per slice")
         allocate(fname_out(1))
         fname_out(1) = "slice_00.h5"
     endif
-    if (size(fname_out) /= n_slices) call abort(260708, "--output must list one file per slice")
-    if (size(str_dim) /= 1 .and. size(str_dim) /= n_slices) call abort(260708, "--dim must have one entry or one per slice")
+    if (size(fname_out) /= n_slices) call abort(261014, "--output must list one file per slice")
+    if (size(str_dim) /= 1 .and. size(str_dim) /= n_slices) call abort(261014, "--dim must have one entry or one per slice")
 
     allocate(cut_pos_all(1:n_slices), cut_dim_all(1:n_slices))
     allocate(Nblocks(1:n_slices), Nblocks_total(1:n_slices), Nblocks_max(1:n_slices))
@@ -110,7 +110,7 @@ subroutine post_extract_slice(params)
     periodic_BC=params%periodic_BC, symmetry_BC=params%symmetry_BC)
 
     do i_slice = 1, n_slices
-        if (cut_pos_all(i_slice) >= domain(cut_dim_all(i_slice))) call abort(260709, "--pos must be smaller than the domain size")
+        if (cut_pos_all(i_slice) >= domain(cut_dim_all(i_slice))) call abort(261014, "--pos must be smaller than the domain size")
     enddo
 
     ! no cropping is used by default, but the variable is not set automatically
@@ -165,7 +165,7 @@ subroutine post_extract_slice(params)
     do i_slice = 1, n_slices
         if (params%rank==0) write(*,'(A,I0,A,I0,A,I0,A,I0,A)') "slice ", i_slice, ": out of the total ", lgt_n(tree_ID)," blocks, ", &
             Nblocks_total(i_slice), " are concerned by slicing, with at max ", Nblocks_max(i_slice), " on one rank."
-        if (Nblocks_total(i_slice) == 0) call abort(260710, "no block is concerned by this slice")
+        if (Nblocks_total(i_slice) == 0) call abort(261014, "no block is concerned by this slice")
     enddo
     ! all slices share one heavy/light layout, so that they can be saved one after the other
     Nblocks_max_all = maxval(Nblocks_max)

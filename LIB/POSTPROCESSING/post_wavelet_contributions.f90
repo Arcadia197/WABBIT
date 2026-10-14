@@ -124,7 +124,7 @@ subroutine post_wavelet_contributions(params)
         if (fname_in(1:2) == "--") exit
         nc = nc + 1
     enddo
-    if (nc == 0) call abort(260110_ik, "--wavelet-contributions: no input file given")
+    if (nc == 0) call abort(261013_ik, "--wavelet-contributions: no input file given")
     allocate(fnames(1:nc))
     do i_field = 1, nc
         call get_command_argument(i_field+1, fnames(i_field))
@@ -132,7 +132,7 @@ subroutine post_wavelet_contributions(params)
     ! options are --name=value, so a later argument without a leading - is a misplaced input file
     do i_arg = nc+2, command_argument_count()
         call get_command_argument(i_arg, arg)
-        if (arg(1:1) /= "-") call abort(260121_ik, "--wavelet-contributions: input files must come before all options, found "//trim(arg))
+        if (arg(1:1) /= "-") call abort(261013_ik, "--wavelet-contributions: input files must come before all options, found "//trim(arg))
     enddo
     fname_in = fnames(1)
 
@@ -153,7 +153,7 @@ subroutine post_wavelet_contributions(params)
     call get_cmd_arg( "--table-file", table_file, default="" )
     call get_cmd_arg_bool( "--coefficient-energies", coef_energies, default=.false. )
     if (coef_energies) then
-        if (sub0_levels /= 0) call abort(260124_ik, "--coefficient-energies does not support --sub0-levels")
+        if (sub0_levels /= 0) call abort(261013_ik, "--coefficient-energies does not support --sub0-levels")
         norms_only = .true.
     endif
 
@@ -176,7 +176,7 @@ subroutine post_wavelet_contributions(params)
         call read_attributes(fnames(i_field), lgt_n_file, time_file, iteration_file, domain_file, Bs_file, tc_length_file, dim_file)
         if (lgt_n_file /= lgt_n(tree_ID) .or. any(Bs_file /= Bs) .or. tc_length_file /= tc_length .or. dim_file /= params%dim &
             .or. any(abs(domain_file - domain) > 1.0e-12_rk*maxval(domain))) then
-            call abort(260111_ik, "--wavelet-contributions: all input files must be on the same grid, but "//trim(fnames(i_field))// &
+            call abort(261013_ik, "--wavelet-contributions: all input files must be on the same grid, but "//trim(fnames(i_field))// &
                 " differs from "//trim(fnames(1)))
         endif
     enddo
@@ -195,14 +195,14 @@ subroutine post_wavelet_contributions(params)
         if (logical_has_extent .and. logical_has_end) then
             write(*,'(A,I0,A)') "ERROR: Cannot specify both --box-extent-", idim, &
                 " and --box-end-", idim
-            call abort(260107_ik, "Cannot use both --box-extent and --box-end for same dimension")
+            call abort(260611_ik, "Cannot use both --box-extent and --box-end for same dimension")
         endif
 
         ! If end point is specified, validate it's greater than origin
         if (logical_has_end .and. box_end_cmd(idim) <= box_origin(idim)) then
             write(*,'(A,I0,A,F16.8,A,F16.8)') "ERROR: box-end-", idim, " (", box_end_cmd(idim), &
                 ") must be > box-origin-", idim, " (", box_origin(idim), ")"
-            call abort(260109_ik, "Box end point must be greater than box origin")
+            call abort(260611_ik, "Box end point must be greater than box origin")
         endif
 
         ! Convert extent to end point if extent was used
@@ -217,10 +217,10 @@ subroutine post_wavelet_contributions(params)
     use_box = all((box_extent(1:params%dim) > 0.0_rk) .or. (box_end_cmd(1:params%dim) > 0.0_rk))
 
     if (box_file /= "" .and. (any(box_extent > 0.0_rk) .or. any(box_end_cmd > 0.0_rk) .or. any(abs(box_origin) > 0.0_rk))) then
-        call abort(260112_ik, "Use either --box-file or --box-origin/--box-extent/--box-end, not both")
+        call abort(261013_ik, "Use either --box-file or --box-origin/--box-extent/--box-end, not both")
     endif
     if (box_file /= "") then
-        if (.not. norms_only) call abort(260113_ik, "--box-file requires --norms-only")
+        if (.not. norms_only) call abort(261013_ik, "--box-file requires --norms-only")
         call read_box_file(trim(box_file))
     elseif (use_box) then
         n_boxes = 1
@@ -298,10 +298,10 @@ subroutine post_wavelet_contributions(params)
     Jmax_active = maxActiveLevel_tree(tree_ID)
 
     if (params%Jmin < 0) then
-        call abort(260100_ik, "--Jmin must be >= 0")
+        call abort(260611_ik, "--Jmin must be >= 0")
     endif
     if (params%Jmin > Jmax_active) then
-        call abort(260104_ik, "--Jmin exceeds max active level in input")
+        call abort(260611_ik, "--Jmin exceeds max active level in input")
     endif
 
     if (params%rank == 0) then
@@ -310,14 +310,14 @@ subroutine post_wavelet_contributions(params)
     endif
 
     if (sub0_levels < 0) then
-        call abort(260101_ik, "--sub0-levels must be >= 0")
+        call abort(260611_ik, "--sub0-levels must be >= 0")
     endif
     if (sub0_levels > 0) then
         if (params%Jmin /= 0) then
-            call abort(260105_ik, "--sub0-levels requires --Jmin=0")
+            call abort(260611_ik, "--sub0-levels requires --Jmin=0")
         endif
         if (Jmin_active /= 0) then
-            call abort(260102_ik, "sub0 requested but active Jmin is not 0")
+            call abort(260611_ik, "sub0 requested but active Jmin is not 0")
         endif
 
         max_sub0_levels = huge(1_ik)
@@ -330,7 +330,7 @@ subroutine post_wavelet_contributions(params)
 
         if (sub0_levels > max_sub0_levels) then
             write(*,'(A,I0,A,I0)') "Requested --sub0-levels=", sub0_levels, " but max allowed is ", max_sub0_levels
-            call abort(260103_ik, "sub0-levels exceeds divide-by-2 limit")
+            call abort(260611_ik, "sub0-levels exceeds divide-by-2 limit")
         endif
     endif
 
@@ -859,7 +859,7 @@ contains
                 tc_first = tc_file
                 lvl_first = lvl_file
             elseif (any(tc_file /= tc_first) .or. any(lvl_file /= lvl_first)) then
-                call abort(260111_ik, "--wavelet-contributions: all input files must be on the same grid, but the blocks of "// &
+                call abort(261013_ik, "--wavelet-contributions: all input files must be on the same grid, but the blocks of "// &
                     trim(fnames(i_file))//" differ from those of "//trim(fnames(1)))
             endif
         enddo
@@ -882,14 +882,14 @@ contains
             ! first pass counts the boxes, the second one reads them
             do i_pass = 1, 2
                 open(newunit=unit_box, file=fname, status='old', action='read', iostat=ios)
-                if (ios /= 0) call abort(260114_ik, "--box-file: cannot open "//fname)
+                if (ios /= 0) call abort(261013_ik, "--box-file: cannot open "//fname)
                 i_line = 0
                 n_found = 0
                 do
                     read(unit_box, '(A)', iostat=ios) line
                     if (ios /= 0) exit
                     i_line = i_line + 1
-                    if (len_trim(line) == len(line)) call abort(260123_ik, "--box-file: line too long (max 1023 characters)")
+                    if (len_trim(line) == len(line)) call abort(261013_ik, "--box-file: line too long (max 1023 characters)")
                     ! tabs and the CR of Windows line ends count as blanks
                     line = str_replace_text(str_replace_text(line, char(9), " "), char(13), " ")
                     line = adjustl(line)
@@ -906,7 +906,7 @@ contains
 
                 if (i_pass == 1) then
                     n_boxes = n_found
-                    if (n_boxes == 0) call abort(260115_ik, "--box-file: no box found in "//fname)
+                    if (n_boxes == 0) call abort(261013_ik, "--box-file: no box found in "//fname)
                     allocate(box_lo(1:3,1:n_boxes), box_hi(1:3,1:n_boxes), box_ids(1:n_boxes))
                     box_lo = 0.0_rk
                     box_hi = 0.0_rk
@@ -941,20 +941,20 @@ contains
         values = 0.0_rk
 
         p = index(line, ';')
-        if (p == 0) call abort(260116_ik, trim(msg)//"got: "//trim(line))
-        if (len_trim(adjustl(line(1:p-1))) > len(id)) call abort(260116_ik, trim(msg)//"the id is longer than 80 characters: "//trim(line))
+        if (p == 0) call abort(261013_ik, trim(msg)//"got: "//trim(line))
+        if (len_trim(adjustl(line(1:p-1))) > len(id)) call abort(261013_ik, trim(msg)//"the id is longer than 80 characters: "//trim(line))
         id = adjustl(line(1:p-1))
-        if (len_trim(id) == 0) call abort(260116_ik, trim(msg)//"the id is empty: "//trim(line))
+        if (len_trim(id) == 0) call abort(261013_ik, trim(msg)//"the id is empty: "//trim(line))
         rest = line(p+1:)
 
         do i_val = 1, n_val
             p = index(rest, ';')
             if (p == 0) p = len_trim(rest) + 1
-            if (len_trim(rest(1:p-1)) == 0) call abort(260117_ik, trim(msg)//"got: "//trim(line))
+            if (len_trim(rest(1:p-1)) == 0) call abort(261013_ik, trim(msg)//"got: "//trim(line))
             ! list-directed read would also accept '1 2', '1,5' or '3*2', so allow only the characters of a number
             ios = verify(trim(adjustl(rest(1:p-1))), "0123456789+-.eEdD")
             if (ios == 0) read(rest(1:p-1), *, iostat=ios) values(i_val)
-            if (ios /= 0) call abort(260118_ik, trim(msg)//"cannot read '"//trim(adjustl(rest(1:p-1)))//"' in: "//trim(line))
+            if (ios /= 0) call abort(261013_ik, trim(msg)//"cannot read '"//trim(adjustl(rest(1:p-1)))//"' in: "//trim(line))
             if (p > len_trim(rest)) then
                 rest = ""
             else
@@ -962,11 +962,11 @@ contains
             endif
         enddo
         ! a trailing ';' is fine, more values are not
-        if (len_trim(rest) > 0) call abort(260119_ik, trim(msg)//"got more: "//trim(line))
+        if (len_trim(rest) > 0) call abort(261013_ik, trim(msg)//"got more: "//trim(line))
 
         do i_val = 1, params%dim
             if (values(params%dim+i_val) <= values(i_val)) then
-                call abort(260120_ik, "--box-file: box end must be > box origin in every direction: "//trim(line))
+                call abort(261013_ik, "--box-file: box end must be > box origin in every direction: "//trim(line))
             endif
         enddo
     end subroutine
@@ -979,7 +979,7 @@ contains
         if (params%rank /= 0) return
 
         open(newunit=table_unit, file=trim(table_file), status='replace', action='write', iostat=ios)
-        if (ios /= 0) call abort(260122_ik, "cannot write the table "//trim(table_file)//" (set another one with --table-file)")
+        if (ios /= 0) call abort(261013_ik, "cannot write the table "//trim(table_file)//" (set another one with --table-file)")
         write(table_unit,'(A)') "% wabbit-post --wavelet-contributions: norms of the level contributions u_j (box 0) and of their box parts u_box"
         write(table_unit,'(A,A,A,es16.8,A,I0,A,I0,A,I0)') "% wavelet=", trim(params%wavelet), " time=", time, " Jmin=", params%Jmin, &
             " Jmax_active=", Jmax_active, " sub0_levels=", sub0_levels

@@ -28,6 +28,7 @@ module module_helpers
 
     ! routines of the steps wrapper should be private to hide them from outside this module
     private :: step_cosine2, step_cosine3, step_cosine4, step_hester3, step_hester4, step_disc2, step_disc4
+    private :: get_cmd_arg_text
 
     !> method numbers for step function, used in the wrapper "step"
     integer, parameter :: STEP_METHOD_COSINE = 1
@@ -1023,6 +1024,41 @@ contains
     end subroutine count_entries
 
     !---------------------------------------------------------------------------
+    ! Helper for the get_cmd_arg_* parsers: reads command-line argument i at its
+    ! full length (no fixed-size buffer, so nothing is cut off) and checks whether
+    ! it STARTS with "name=". If so, found=.true. and text is what follows the "=",
+    ! with quotes " removed (text may have trailing blanks, use len_trim).
+    ! is_flag (optional) is .true. if the argument is exactly "name".
+    !---------------------------------------------------------------------------
+    subroutine get_cmd_arg_text( i, name, found, text, is_flag )
+        implicit none
+        integer, intent(in) :: i
+        character(len=*), intent(in) :: name
+        logical, intent(out) :: found
+        character(len=:), allocatable, intent(out) :: text
+        logical, intent(out), optional :: is_flag
+
+        character(len=:), allocatable :: arg, prefix
+        integer :: n
+
+        prefix = trim(adjustl(name))//"="
+        call get_command_argument(i, length=n)
+        allocate(character(len=n) :: arg)
+        if (n > 0) call get_command_argument(i, arg)
+
+        found = .false.
+        if (len(arg) >= len(prefix)) found = (arg(1:len(prefix)) == prefix)
+
+        if (found) then
+            text = str_replace_text( arg(len(prefix)+1:), '"', '')
+        else
+            text = ""
+        endif
+
+        if (present(is_flag)) is_flag = (arg == trim(adjustl(name)))
+    end subroutine
+
+    !---------------------------------------------------------------------------
     ! Command-line argument parser. You can parse stuff like:
     ! ./program --hallo=10.4
     ! ./program --deine="10.4"
@@ -1045,7 +1081,8 @@ contains
         character(len=*), intent(out) :: value
 
         integer :: i, rank, ierr
-        character(len=clong) :: args
+        character(len=:), allocatable :: args
+        logical :: found
 
         value = default
         call MPI_Comm_rank(MPI_COMM_WORLD, rank, ierr)
@@ -1054,14 +1091,17 @@ contains
         ! this may be not the most efficient way, but command line parsing is done only
         ! once on startup, hence performance does not matter.
         do i = 1, command_argument_count()
-            call get_command_argument(i,args)
+            ! does the argument start with '--name='? args is what follows, without quotes
+            call get_cmd_arg_text(i, name, found, args)
 
-            ! is the string '--name=' in the argument?
-            if (index(args, trim(adjustl(name))//"=") /= 0) then
-                ! remove the string '--name='
-                value = str_replace_text( args, trim(adjustl(name))//"=", "")
-                ! remove quotation marks, if any
-                value = str_replace_text( value, '"', '')
+            if (found) then
+                ! never cut off silently (e.g. a long file path)
+                if (len_trim(args) > len(value)) then
+                    if (rank == 0) write(*,'(A,I0,A)') "COMMAND-LINE-PARAMETER: "//trim(adjustl(name))//" is longer than ", &
+                        len(value), " characters: "//trim(args)
+                    call abort(261014, "Command-line parameter too long.")
+                endif
+                value = args
 
                 if (rank == 0) then
                     write(*,'(A)') "COMMAND-LINE-PARAMETER: read "//trim(adjustl(name))//" = "//trim(adjustl(value))
@@ -1100,8 +1140,11 @@ contains
         character(len=*), intent(out), ALLOCATABLE :: value(:)
 
         integer :: i, rank, ierr, n, k
-        character(len=600) :: args
-        character(len=10) :: frmt
+        character(len=:), allocatable :: args
+        logical :: found
+        ! one character longer than value: an entry that does not fit into value
+        ! is then (after being cut to this length) still longer than value and detected
+        character(len=len(value)+1), allocatable :: entries(:)
 
 
         call MPI_Comm_rank(MPI_COMM_WORLD, rank, ierr)
@@ -1110,25 +1153,35 @@ contains
         ! this may be not the most efficient way, but command line parsing is done only
         ! once on startup, hence performance does not matter.
         do i = 1, command_argument_count()
-            call get_command_argument(i, args)
+            ! does the argument start with '--name='? args is what follows, without quotes
+            call get_cmd_arg_text(i, name, found, args)
 
-            if (index(args, trim(adjustl(name))//"=") /= 0) then
-                ! remove the string "--name="
-                args = str_replace_text( args, trim(adjustl(name))//"=", "")
-                ! remove str delimiter "
-                args = str_replace_text( args, '"', '')
+            if (found) then
                 ! count number of vector entries
                 call count_entries(args, n)
 
-                allocate( value(1:n) )
-
                 if (n == 1) then
-                    read(args, '(A)') value(1)(:)
+                    allocate( entries(1:1) )
+                    entries(1) = args
                 else
                     ! previous version using only read(args,*) value doesnt work with filepaths
                     ! because fortran interprets / as the end of string
-                    call split_string(args,value)
+                    call split_string(args, entries)
                 end if
+
+                ! never cut off silently (e.g. a long file path)
+                do k = 1, n
+                    if (len_trim(adjustl(entries(k))) > len(value)) then
+                        if (rank == 0) write(*,'(A,I0,A)') "COMMAND-LINE-PARAMETER: an entry of "//trim(adjustl(name))// &
+                            " is longer than ", len(value), " characters: "//trim(adjustl(entries(k)))
+                        call abort(261014, "Command-line parameter too long.")
+                    endif
+                enddo
+
+                allocate( value(1:n) )
+                do k = 1, n
+                    value(k) = entries(k)
+                enddo
 
                 if (rank == 0) then
                     write(*,'("COMMAND-LINE-PARAMETER: read ",A," length=",i2)') trim(adjustl(name)), n
@@ -1165,17 +1218,17 @@ contains
         integer(kind=ik), intent(out) :: value
 
         integer :: i, rank, ierr
-        character(len=clong) :: args
+        character(len=:), allocatable :: args
         integer :: iostat
+        logical :: found
 
         call MPI_Comm_rank(MPI_COMM_WORLD, rank, ierr)
 
         do i = 1, command_argument_count()
-            call get_command_argument(i,args)
+            ! does the argument start with '--name='? args is what follows, without quotes
+            call get_cmd_arg_text(i, name, found, args)
 
-            if (index(args, trim(adjustl(name))//"=") /= 0) then
-                args = str_replace_text( args, trim(adjustl(name))//"=", "")
-                args = str_replace_text( args, '"', '')
+            if (found) then
 
                 read(args, *, iostat=iostat) value
 
@@ -1223,17 +1276,17 @@ contains
         real(kind=rk), intent(out) :: value
 
         integer :: i, rank, ierr
-        character(len=clong) :: args
+        character(len=:), allocatable :: args
         integer :: iostat
+        logical :: found
 
         call MPI_Comm_rank(MPI_COMM_WORLD, rank, ierr)
 
         do i = 1, command_argument_count()
-            call get_command_argument(i,args)
+            ! does the argument start with '--name='? args is what follows, without quotes
+            call get_cmd_arg_text(i, name, found, args)
 
-            if (index(args, trim(adjustl(name))//"=") /= 0) then
-                args = str_replace_text( args, trim(adjustl(name))//"=", "")
-                args = str_replace_text( args, '"', '')
+            if (found) then
 
                 read(args, *, iostat=iostat) value
 
@@ -1289,8 +1342,8 @@ contains
         logical, intent(out) :: value
 
         integer :: i, rank, ierr
-        character(len=clong) :: args
-        integer :: iostat
+        character(len=:), allocatable :: args
+        logical :: found, is_flag
 
         call MPI_Comm_rank(MPI_COMM_WORLD, rank, ierr)
 
@@ -1298,15 +1351,12 @@ contains
         ! this may be not the most efficient way, but command line parsing is done only
         ! once on startup, hence performance does not matter.
         do i = 1, command_argument_count()
-            call get_command_argument(i,args)
+            ! does the argument start with '--name='? args is what follows, without quotes.
+            ! is_flag: the argument is exactly '--name'
+            call get_cmd_arg_text(i, name, found, args, is_flag)
 
-            ! is the string '--name=' in the argument?
-            if (index(args, trim(adjustl(name))//"=") /= 0) then
-                ! remove the string '--name='
-                args = str_replace_text( args, trim(adjustl(name))//"=", "")
-                ! remove quoatiion marks, if any
-                args = str_replace_text( args, '"', '')
-                ! now args is just the substring left of the '=' sign.
+            if (found) then
+                ! now args is just the substring right of the '=' sign.
 
                 if (args=="true".or.args=="1".or.args=="yes".or.args=="TRUE".or.args=="y".or.args==".true.".or.args=="T".or.args=="t") then
                     value = .true.
@@ -1325,7 +1375,7 @@ contains
                 return
 
 
-            elseif ( args == name ) then
+            elseif ( is_flag ) then
                 ! in the case of logical, we can also call '--name', which also returns TRUE.
                 value = .true.
 
@@ -1350,8 +1400,8 @@ contains
     ! used). Used mostly for postprocessing, but WABBIT also uses it.
     subroutine print_command_line_arguments()
         implicit none
-        integer :: i, rank, ierr
-        character(len=clong) :: args
+        integer :: i, rank, ierr, n
+        character(len=:), allocatable :: args
 
         call MPI_Comm_rank(MPI_COMM_WORLD, rank, ierr)
         if (rank == 0) then
@@ -1361,7 +1411,11 @@ contains
             write(*,'("╚", 78("═"), "╝")')
 
             do i = 0, command_argument_count()
-                call get_command_argument(i,args)
+                ! read every argument at its full length (no truncation)
+                call get_command_argument(i, length=n)
+                if (allocated(args)) deallocate(args)
+                allocate(character(len=n) :: args)
+                if (n > 0) call get_command_argument(i,args)
                 write(*,'(A,1x)', advance="no") trim(adjustl(args))
             enddo
             write(*,*) " "  ! newline
