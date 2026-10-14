@@ -1,13 +1,15 @@
-! extract 2D slice from 3D data (currently only x=const, i.e. y-z plane)
+! extract 2D slices from 3D data (x=const, y=const or z=const planes)
 !
 ! Algorithm:
 !
-! load data
-! for all blocks:
-!       check if the block contains the x_quey position
+! load data (once)
+! for all requested slices:
+!   for all blocks:
+!       check if the block contains the x_query position
 !       if yes:
-!           interpolate the data along the x-axis to match x_query
-!           save this interpolated slice
+!           interpolate the data along the cut direction to match x_query
+!           store this interpolated slice
+! save all slices (afterwards, as saving overwrites the 3D grid with the 2D one)
 
 subroutine post_extract_slice(params)
     use module_globals
@@ -19,7 +21,7 @@ subroutine post_extract_slice(params)
 
     implicit none
 
-    character(len=chuge)                       :: fname, fname_out
+    character(len=chuge)                       :: fname
     type (type_params), intent(inout)       :: params
 
     real(kind=rk), allocatable              :: hvy_block(:, :, :, :, :)
@@ -31,12 +33,19 @@ subroutine post_extract_slice(params)
     real(kind=rk), dimension(3)             :: domain
     real(kind=rk), dimension(4)             :: xi
     real(kind=rk)                           :: time, cut_pos
-    real(kind=rk), allocatable              :: hvy_block_2Dslice(:, :, :, :, :)
+    ! last index: slice number
+    real(kind=rk), allocatable              :: hvy_block_2Dslice(:, :, :, :, :, :)
     integer(kind=tsize)                     :: tc_3D, tc_2D
-    integer(kind=ik), allocatable           :: lgt_block_2Dslice(:,:)
+    integer(kind=ik), allocatable           :: lgt_block_2Dslice(:,:,:)
     integer(kind=ik), allocatable           :: lgt_active_2Dslice(:,:), hvy_active_2Dslice(:,:)
 
-    integer(kind=ik)  :: Nblocks, Nblocks_total, Nblocks_max, g, cut_dim
+    ! several slices per call: --dim, --pos and --output are lists (one entry per slice, --dim may have one entry for all)
+    character(len=chuge), allocatable       :: str_dim(:), str_pos(:), fname_out(:)
+    integer(kind=ik), allocatable           :: cut_dim_all(:), Nblocks(:), Nblocks_total(:), Nblocks_max(:)
+    real(kind=rk), allocatable              :: cut_pos_all(:)
+    integer(kind=ik)  :: n_slices, i_slice, Nblocks_max_all
+
+    integer(kind=ik)  :: g, cut_dim
     real(kind=rk)    :: cut_pos_normalized
     integer(kind=ik) :: icut, ixyz(1:3),mpicode, i_hvy, i_lgt
     logical          :: help1, help2, help3
@@ -52,15 +61,18 @@ subroutine post_extract_slice(params)
     if (help1 .or. help2 .or. help3 .and. params%rank==0) then
         if (params%rank==0) then
             write(*,'(A)') "-----------------------------------------------------------"
-            write(*,'(A)') " Wabbit extract slice: extract a 2D slice from a 3D dataset"
+            write(*,'(A)') " Wabbit extract slice: extract 2D slices from a 3D dataset"
             write(*,'(A)') "-----------------------------------------------------------"
             write(*,'(A)') " ./wabbit-post --extract-slice --file=FILE.h5 --output=SLICE.h5 --dim=1 --pos=0.5 --wavelet=CDF20"
+            write(*,'(A)') " several slices at once (the file is read only once):"
+            write(*,'(A)') " ./wabbit-post --extract-slice --file=FILE.h5 --output=X1.h5,X2.h5,Y1.h5 --dim=1,1,2 --pos=0.5,0.6,0.5"
             write(*,'(A)') ""
             write(*,'(A)') "-----------------------------------------------------------"
             write(*,'(A)') " --file                - input file (3D data)"
-            write(*,'(A)') " --output=slice_00.h5  - output file (2D slice)"
-            write(*,'(A)') " --dim                 - dimension along which the slice is extracted (1:x, 2:y, 3:z)"
-            write(*,'(A)') " --pos                 - position of the slice along the specified dimension"
+            write(*,'(A)') " --output=slice_00.h5  - output file(s) (2D slice), one per slice"
+            write(*,'(A)') " --dim                 - dimension(s) along which the slice is extracted (1:x, 2:y, 3:z),"
+            write(*,'(A)') "                         one per slice or a single one for all slices"
+            write(*,'(A)') " --pos                 - position(s) of the slice(s) along the specified dimension"
             write(*,'(A)') " --wavelet=CDF20       - wavelet used for synching the data"
             write(*,'(A)') "-----------------------------------------------------------"
         end if
@@ -68,17 +80,38 @@ subroutine post_extract_slice(params)
     endif
 
     call get_cmd_arg("--file", fname, "none")
-    call get_cmd_arg("--output", fname_out, "slice_00.h5")
-    call get_cmd_arg("--dim", cut_dim, -1)
-    call get_cmd_arg("--pos", cut_pos, -1.0_rk)
-    if (cut_dim<1 .or. cut_dim>3) call abort(260707, "--dim must be 1 (x), 2 (y) or 3 (z)")
-    if (cut_pos<0.0_rk) call abort(260707, "--pos must be >= 0.0")
+    call get_cmd_arg("--pos", str_pos)
+    call get_cmd_arg("--dim", str_dim)
+    call get_cmd_arg("--output", fname_out)
+    if (.not. allocated(str_pos)) call abort(260707, "--pos must be given")
+    if (.not. allocated(str_dim)) call abort(260707, "--dim must be given")
+    n_slices = size(str_pos)
+    if (.not. allocated(fname_out)) then
+        if (n_slices /= 1) call abort(260708, "--output must list one file per slice")
+        allocate(fname_out(1))
+        fname_out(1) = "slice_00.h5"
+    endif
+    if (size(fname_out) /= n_slices) call abort(260708, "--output must list one file per slice")
+    if (size(str_dim) /= 1 .and. size(str_dim) /= n_slices) call abort(260708, "--dim must have one entry or one per slice")
+
+    allocate(cut_pos_all(1:n_slices), cut_dim_all(1:n_slices))
+    allocate(Nblocks(1:n_slices), Nblocks_total(1:n_slices), Nblocks_max(1:n_slices))
+    do i_slice = 1, n_slices
+        read(str_pos(i_slice), *) cut_pos_all(i_slice)
+        read(str_dim(min(i_slice, size(str_dim))), *) cut_dim_all(i_slice)
+        if (cut_dim_all(i_slice)<1 .or. cut_dim_all(i_slice)>3) call abort(260707, "--dim must be 1 (x), 2 (y) or 3 (z)")
+        if (cut_pos_all(i_slice)<0.0_rk) call abort(260707, "--pos must be >= 0.0")
+    enddo
 
     call check_file_exists( fname )
 
     ! get some parameters from the file
     call read_attributes(fname, lgt_n(tree_ID), time, iteration, domain, Bs, tc_length, dim, &
     periodic_BC=params%periodic_BC, symmetry_BC=params%symmetry_BC)
+
+    do i_slice = 1, n_slices
+        if (cut_pos_all(i_slice) >= domain(cut_dim_all(i_slice))) call abort(260709, "--pos must be smaller than the domain size")
+    enddo
 
     ! no cropping is used by default, but the variable is not set automatically
     params%domainSizeCropped = domain
@@ -110,6 +143,7 @@ subroutine post_extract_slice(params)
 
     call sync_ghosts_tree( params, hvy_block, tree_ID )
 
+    ! count the blocks concerned by every slice
     Nblocks = 0
     do k = 1, hvy_n(tree_ID)
         hvy_id = hvy_active(k, tree_ID)
@@ -117,21 +151,35 @@ subroutine post_extract_slice(params)
         call hvy2lgt(lgt_id, hvy_id, params%rank, params%number_blocks)
         call get_block_spacing_origin( params, lgt_id, x0, dx )
 
-        if ((x0(cut_dim) <= cut_pos) .and. (cut_pos < x0(cut_dim)+real(Bs(cut_dim),kind=rk)*dx(cut_dim))) then
-            Nblocks = Nblocks +1
-        endif
+        do i_slice = 1, n_slices
+            cut_dim = cut_dim_all(i_slice)
+            cut_pos = cut_pos_all(i_slice)
+            if ((x0(cut_dim) <= cut_pos) .and. (cut_pos < x0(cut_dim)+real(Bs(cut_dim),kind=rk)*dx(cut_dim))) then
+                Nblocks(i_slice) = Nblocks(i_slice) +1
+            endif
+        enddo
     end do
     ! we need to allreaduce Nblocks inplace to get how many blocks will really be sliced in total, and how many at maximum on one rank
-    call MPI_Allreduce(Nblocks, Nblocks_total, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, mpicode)
-    call MPI_Allreduce(Nblocks, Nblocks_max, 1, MPI_INTEGER, MPI_MAX, MPI_COMM_WORLD, mpicode)
-    if (params%rank==0) write(*,'(A,I0,A,I0,A,I0,A)') "out of the total ", lgt_n(tree_ID)," blocks, ", Nblocks_total, " are concerned by slicing, with at max ", Nblocks_max, " on one rank."
+    call MPI_Allreduce(Nblocks, Nblocks_total, n_slices, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, mpicode)
+    call MPI_Allreduce(Nblocks, Nblocks_max, n_slices, MPI_INTEGER, MPI_MAX, MPI_COMM_WORLD, mpicode)
+    do i_slice = 1, n_slices
+        if (params%rank==0) write(*,'(A,I0,A,I0,A,I0,A,I0,A)') "slice ", i_slice, ": out of the total ", lgt_n(tree_ID)," blocks, ", &
+            Nblocks_total(i_slice), " are concerned by slicing, with at max ", Nblocks_max(i_slice), " on one rank."
+        if (Nblocks_total(i_slice) == 0) call abort(260710, "no block is concerned by this slice")
+    enddo
+    ! all slices share one heavy/light layout, so that they can be saved one after the other
+    Nblocks_max_all = maxval(Nblocks_max)
 
-    allocate( hvy_block_2Dslice(1:Bs(2)+2*g, 1:Bs(3)+2*g, 1, 1, 1:Nblocks_max) )
-    allocate( lgt_block_2Dslice(1:Nblocks_max*params%number_procs, 1:EXTRA_LGT_FIELDS))
-    allocate( lgt_active_2Dslice(1:Nblocks_max*params%number_procs, 1), hvy_active_2Dslice(1:Nblocks_max*params%number_procs, 1))
+    allocate( hvy_block_2Dslice(1:Bs(2)+2*g, 1:Bs(3)+2*g, 1, 1, 1:Nblocks_max_all, 1:n_slices) )
+    allocate( lgt_block_2Dslice(1:Nblocks_max_all*params%number_procs, 1:EXTRA_LGT_FIELDS, 1:n_slices))
+    allocate( lgt_active_2Dslice(1:Nblocks_max_all*params%number_procs, 1), hvy_active_2Dslice(1:Nblocks_max_all*params%number_procs, 1))
 
     hvy_block_2Dslice = 0.0_rk
     lgt_block_2Dslice = -1
+
+    do i_slice = 1, n_slices
+    cut_dim = cut_dim_all(i_slice)
+    cut_pos = cut_pos_all(i_slice)
 
     i_hvy = 1  ! this is the index where we will write the next block in the 2D slice
     do k = 1, hvy_n(tree_ID)
@@ -170,19 +218,19 @@ subroutine post_extract_slice(params)
 
             ! interpolate the slice along the x-direction
             if (cut_dim==1) then
-                hvy_block_2Dslice(:, :, 1, 1, i_hvy) = &
+                hvy_block_2Dslice(:, :, 1, 1, i_hvy, i_slice) = &
                     +lagrange_polynomial(cut_pos_normalized, xi, 1)*hvy_block( icut-1, :, :, 1, hvy_id) &
                     +lagrange_polynomial(cut_pos_normalized, xi, 2)*hvy_block( icut  , :, :, 1, hvy_id) &
                     +lagrange_polynomial(cut_pos_normalized, xi, 3)*hvy_block( icut+1, :, :, 1, hvy_id) &
                     +lagrange_polynomial(cut_pos_normalized, xi, 4)*hvy_block( icut+2, :, :, 1, hvy_id)
             elseif (cut_dim==2) then
-                hvy_block_2Dslice(:, :, 1, 1, i_hvy) = &
+                hvy_block_2Dslice(:, :, 1, 1, i_hvy, i_slice) = &
                     +lagrange_polynomial(cut_pos_normalized, xi, 1)*hvy_block( :, icut-1, :, 1, hvy_id) &
                     +lagrange_polynomial(cut_pos_normalized, xi, 2)*hvy_block( :, icut  , :, 1, hvy_id) &
                     +lagrange_polynomial(cut_pos_normalized, xi, 3)*hvy_block( :, icut+1, :, 1, hvy_id) &
                     +lagrange_polynomial(cut_pos_normalized, xi, 4)*hvy_block( :, icut+2, :, 1, hvy_id)
             elseif (cut_dim==3) then
-                hvy_block_2Dslice(:, :, 1, 1, i_hvy) = &
+                hvy_block_2Dslice(:, :, 1, 1, i_hvy, i_slice) = &
                     +lagrange_polynomial(cut_pos_normalized, xi, 1)*hvy_block( :, :, icut-1, 1, hvy_id) &
                     +lagrange_polynomial(cut_pos_normalized, xi, 2)*hvy_block( :, :, icut  , 1, hvy_id) &
                     +lagrange_polynomial(cut_pos_normalized, xi, 3)*hvy_block( :, :, icut+1, 1, hvy_id) &
@@ -204,48 +252,57 @@ subroutine post_extract_slice(params)
             endif
 
             ! for writing in the 2D slice, we need to compute the new lgt_id
-            call hvy2lgt(i_lgt, i_hvy, params%rank, Nblocks_max)
+            call hvy2lgt(i_lgt, i_hvy, params%rank, Nblocks_max_all)
 
             ! copy computed treecode and som other information to lgt_block for the 2D slice
-            lgt_block_2Dslice(i_lgt, :)   = -1
+            lgt_block_2Dslice(i_lgt, :, i_slice)   = -1
             ! lgt_block_2Dslice(i_lgt, 1:level) = treecode(1:level)
-            lgt_block_2Dslice(i_lgt, IDX_MESH_LVL)   = level
-            lgt_block_2Dslice(i_lgt, IDX_TREE_ID)    = 1
-            lgt_block_2Dslice(i_lgt, IDX_REFINE_STS) = 0
-            call set_tc(lgt_block_2Dslice( i_lgt, IDX_TC_1:IDX_TC_2), tc_2D)
+            lgt_block_2Dslice(i_lgt, IDX_MESH_LVL, i_slice)   = level
+            lgt_block_2Dslice(i_lgt, IDX_TREE_ID, i_slice)    = 1
+            lgt_block_2Dslice(i_lgt, IDX_REFINE_STS, i_slice) = 0
+            call set_tc(lgt_block_2Dslice( i_lgt, IDX_TC_1:IDX_TC_2, i_slice), tc_2D)
             i_hvy = i_hvy + 1
         endif
     end do
+    end do ! slices
 
-    ! save 2D slice to disk, change code to now expect 2D data
+    ! save 2D slices to disk, change code to now expect 2D data
     params%dim = 2
-    ! ToDo: Julius - tbh I am not sure if this is correct for data where Bs(1) != Bs(2) != Bs(3)
-    if (cut_dim==1) then
-        params%Bs = (/Bs(2), Bs(3), 1/)
-        params%domain_size = (/domain(2), domain(3), 0.0_rk/)
-    elseif (cut_dim==2) then
-        params%Bs = (/Bs(1), Bs(3), 1/)
-        params%domain_size = (/domain(1), domain(3), 0.0_rk/)
-    elseif (cut_dim==3) then
-        params%Bs = (/Bs(1), Bs(2), 1/)
-        params%domain_size = (/domain(1), domain(2), 0.0_rk/)
-    endif
 
     ! -------------------
-    ! reinitialize all arrays with our 2D data
+    ! reinitialize all arrays with our 2D data (same layout for all slices)
     deallocate(lgt_block, lgt_active, hvy_active)
     allocate(lgt_block(size(lgt_block_2Dslice,1), size(lgt_block_2Dslice,2)))
     allocate(lgt_active(size(lgt_active_2Dslice,1), size(lgt_active_2Dslice,2)))
     allocate(hvy_active(size(hvy_active_2Dslice,1), size(hvy_active_2Dslice,2)))
+    params%number_blocks = Nblocks_max_all
 
-    ! we only need to set lgt_block and the amount of blocks, the rest will be updated later on
-    lgt_block  = lgt_block_2Dslice
-    params%number_blocks = Nblocks_max
-    ! -------------------
-    ! now correct meta information and everything
-    call synchronize_lgt_data( params, refinement_status_only=.false. )  ! this syncs the lgt_block between the processors
-    call updateMetadata_tree(params, tree_ID, search_overlapping=.true.)  ! this updates the active lists and neighbor/family relations
+    do i_slice = 1, n_slices
+        cut_dim = cut_dim_all(i_slice)
+        ! ToDo: Julius - tbh I am not sure if this is correct for data where Bs(1) != Bs(2) != Bs(3)
+        if (cut_dim==1) then
+            params%Bs = (/Bs(2), Bs(3), 1/)
+            params%domain_size = (/domain(2), domain(3), 0.0_rk/)
+        elseif (cut_dim==2) then
+            params%Bs = (/Bs(1), Bs(3), 1/)
+            params%domain_size = (/domain(1), domain(3), 0.0_rk/)
+        elseif (cut_dim==3) then
+            params%Bs = (/Bs(1), Bs(2), 1/)
+            params%domain_size = (/domain(1), domain(2), 0.0_rk/)
+        endif
 
-    call saveHDF5_tree( fname_out, time, iteration, 1, params, hvy_block_2Dslice, tree_ID)
+        ! we only need to set lgt_block and the amount of blocks, the rest will be updated later on
+        lgt_block  = lgt_block_2Dslice(:, :, i_slice)
+        ! createActiveSortedLists_tree first resets the old active lists of length hvy_n; after a previous
+        ! slice hvy_n can be 0 on a rank, which it would replace by size(hvy_active,1) = Nblocks_max_all*number_procs,
+        ! larger than its send buffer (sized with the 3D number of blocks per rank). Nblocks_max_all is always valid.
+        hvy_n(tree_ID) = Nblocks_max_all
+        ! -------------------
+        ! now correct meta information and everything
+        call synchronize_lgt_data( params, refinement_status_only=.false. )  ! this syncs the lgt_block between the processors
+        call updateMetadata_tree(params, tree_ID, search_overlapping=.true.)  ! this updates the active lists and neighbor/family relations
+
+        call saveHDF5_tree( fname_out(i_slice), time, iteration, 1, params, hvy_block_2Dslice(:, :, :, :, :, i_slice), tree_ID)
+    enddo
 
 end subroutine
