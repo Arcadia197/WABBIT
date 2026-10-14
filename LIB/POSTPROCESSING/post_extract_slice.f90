@@ -117,7 +117,7 @@ subroutine post_extract_slice(params)
         call hvy2lgt(lgt_id, hvy_id, params%rank, params%number_blocks)
         call get_block_spacing_origin( params, lgt_id, x0, dx )
 
-        if ((x0(cut_dim) <= cut_pos) .and. (cut_pos < x0(cut_dim)+real(Bs(cut_dim)-1,kind=rk)*dx(cut_dim))) then
+        if ((x0(cut_dim) <= cut_pos) .and. (cut_pos < x0(cut_dim)+real(Bs(cut_dim),kind=rk)*dx(cut_dim))) then
             Nblocks = Nblocks +1
         endif
     end do
@@ -142,7 +142,7 @@ subroutine post_extract_slice(params)
         level = lgt_block(lgt_id, IDX_MESH_LVL)
         call get_block_spacing_origin( params, lgt_id, x0, dx )
 
-        if ((x0(cut_dim) <= cut_pos) .and. (cut_pos < x0(cut_dim)+real(Bs(cut_dim)-1,kind=rk)*dx(cut_dim))) then
+        if ((x0(cut_dim) <= cut_pos) .and. (cut_pos < x0(cut_dim)+real(Bs(cut_dim),kind=rk)*dx(cut_dim))) then
             !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             ! floor index: in our notation, this is point 1 (the second point)
             ! where: | is location of interpolation
@@ -158,7 +158,7 @@ subroutine post_extract_slice(params)
 
             ! coordinate in the local coordinate system (above), where the point IX corresonds
             ! to 1.
-            cut_pos_normalized = 1 + ( cut_pos - x0(cut_dim)+real(icut-g-1, kind=rk)*dx(cut_dim) )
+            cut_pos_normalized = 1.0_rk + ( cut_pos - (x0(cut_dim)+real(icut-g-1, kind=rk)*dx(cut_dim)) ) / dx(cut_dim)
 
             if ((icut<g+1) .or. (icut>Bs(cut_dim)+g)) then
                 write(*,*) icut
