@@ -393,7 +393,12 @@ subroutine wavelet_decompose_full_tree(params, hvy_block, tree_ID, hvy_tmp, init
         ! block only needs information from medium and fine neighbors as CE will cut dependency to coarse neighbors
         t_block = MPI_Wtime()
         ! first point is SC and last WC, so we need left(HD) or right(GD) for sync
-        g_this = max(abs(lbound(params%HD,1)),ubound(params%GD,1))
+        ! the block starts with a SC point and ends with a WC point (even Bs, enforced by the ini-file parser:
+        ! 'Block-size must be EVEN number'), so the filters reach into the ghost nodes by
+        !   first SC: |lbound(HD)|, first WC: |lbound(GD)|-1, last SC: ubound(HD)-1, last WC: ubound(GD).
+        ! For CDF the first and last entry are the relevant ones (symmetric HD, short GD); for the orthogonal coiflets
+        ! HD(-4:7), GD(-7:4) the other two terms are larger and a too small value left stale ghost nodes in the decomposition.
+        g_this = max(abs(lbound(params%HD,1)), ubound(params%GD,1), abs(lbound(params%GD,1))-1, ubound(params%HD,1)-1)
 
         write(string_prepare, '(A, i0)') "wavelet_decompose_syncN_lvl", level  !< prepare format string for sync debug
 
