@@ -55,6 +55,17 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
     ! compute norm of RHS for relative tolerances
     call componentWiseNorm_tree(params, hvy_RHS(:,:,:,1:size(hvy_RHS,4),:), tree_ID, "Linfty", norm_sol(1:size(hvy_RHS,4)), threshold_state_vector=.false.)
 
+    ! zero RHS (e.g. div(u)=0 exactly for a constant field with central stencils): the zero-mean solution is zero,
+    ! and the relative residuals below would be 0/0
+    if (all(norm_sol(1:size(hvy_RHS,4)) == 0.0_rk)) then
+        do k_block = 1, hvy_n(tree_ID)
+            hvy_id = hvy_active(k_block, tree_ID)
+            hvy_sol(:,:,:,1:size(hvy_RHS,4),hvy_id) = 0.0_rk
+        enddo
+        if (params%rank == 0) write(*, '(A)') "   Poisson RHS is zero, solution set to zero without cycles"
+        return
+    endif
+
     ! the refinement_status is used in multigrid routines for things other than the refinement_status
     ! but that may be problematic if we have set the refinement_status externally and like to keep it.
     ! This happens for example when using significant refinement. We make a backup, and copy the original

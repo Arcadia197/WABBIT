@@ -277,20 +277,20 @@ subroutine ini_file_to_params( params, filename )
 
    ! get FD stencil sizes for checking ghost node sizes
    call setup_FD1_left_stencil(params%order_discretization, filter_dummy, FD_l, FD_r)
-   FD1_size = max(FD_l, FD_r)
+   FD1_size = max(abs(FD_l), abs(FD_r))
    call setup_FD2_stencil(params%order_discretization, filter_dummy, FD_l, FD_r)
-   FD2_size = max(FD_l, FD_r)
+   FD2_size = max(abs(FD_l), abs(FD_r))
    FD_max_size = max(FD1_size, FD2_size)
 
    ! we have to adjust g according to poisson stencil size
    ! ToDo: Sometimes we want to do helmholtz projections, so we need to check the size then as well
    if (params%PDE_type == "mixed_hyperbolic_parabolic") then
       call setup_FD2_stencil(params%order_discretization, filter_dummy, FD_l, FD_r, use_composite_stencils=.true.)
-      FD2_size = max(FD_l, FD_r)
+      FD2_size = max(abs(FD_l), abs(FD_r))
       FD_max_size = max(FD_max_size, FD2_size)
 
       call setup_FD2_stencil(params%poisson_order, filter_dummy, FD_l, FD_r, use_composite_stencils=.true.)
-      FD2_size = max(FD_l, FD_r)
+      FD2_size = max(abs(FD_l), abs(FD_r))
       FD_max_size = max(FD_max_size, FD2_size)
    endif
 

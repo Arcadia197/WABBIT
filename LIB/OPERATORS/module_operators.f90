@@ -360,7 +360,7 @@ subroutine setup_FD2_stencil(FD2_order_discretization_in, FD2_array, fd2_start, 
         case("FD_2nd_comp_0_2")
             if (use_composite) then
                 fd2_start = -2
-                fd2_end = 0
+                fd2_end = 2
                 allocate(FD2_array(fd2_start:fd2_end))
                 FD2_array(:) = FD2_COMP2_0_2(:)
             else
