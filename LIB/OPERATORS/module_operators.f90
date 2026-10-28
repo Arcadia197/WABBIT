@@ -80,7 +80,7 @@ real(kind=rk), parameter :: FD1_COMP8_3_5(-3:5) = (/ -5.0_rk, 60.0_rk, -420.0_rk
 !**********************************************************************************************
 ! These are the important routines that are visible to WABBIT:
 !**********************************************************************************************
-PUBLIC :: compute_derivative, compute_vorticity, compute_vorticity_abs, compute_vorticity_stretching, compute_helicity, compute_helicity_abs, compute_divergence, compute_gradient, compute_laplacian, compute_Qcriterion, compute_dissipation, componentWiseNorm_tree, componentWiseNorm_block, setup_FD1_left_stencil, setup_FD1_right_stencil, setup_FD2_stencil, setup_FD1X_stencil, subtract_scalar_gradient
+PUBLIC :: compute_derivative, compute_vorticity, compute_vorticity_abs, compute_vorticity_stretching, compute_helicity, compute_helicity_abs, compute_divergence, compute_gradient, compute_laplacian, compute_Qcriterion, compute_dissipation, componentWiseNorm_tree, componentWiseNorm_block, setup_FD1_left_stencil, setup_FD1_right_stencil, setup_FD2_stencil, setup_FD1X_stencil, subtract_scalar_gradient, FD2_spectral_radius
 
 contains
 
@@ -557,6 +557,37 @@ subroutine setup_FD2_stencil(FD2_order_discretization_in, FD2_array, fd2_start, 
             call abort(250616, "ERROR: order of FD2 discretization not known: " // trim(FD2_order_discretization_in))
     end select
 end subroutine setup_FD2_stencil
+
+!**********************************************************************************************
+!> \brief spectral radius of the central FD2 stencil used by the RHS for the viscous term
+!> \details This is the largest |eigenvalue|*dx**2 of the 1D FD2 operator, i.e. max over theta of |sum_j a_j exp(i j theta)|
+!> (4 for FD2, 16/3 for FD4, 272/45 for FD6). It sets the default of CFL_nu (explicit viscous time step restriction).
+function FD2_spectral_radius(FD2_order_discretization_in) result(rho)
+    implicit none
+
+    character(len=*), intent(in) :: FD2_order_discretization_in !> order of the discretization (scheme name)
+    real(kind=rk) :: rho
+    real(kind=rk), allocatable :: FD2(:)
+    integer(kind=ik) :: fd2_start, fd2_end, j, k
+    integer(kind=ik), parameter :: nsamples = 4097
+    real(kind=rk) :: theta
+    complex(kind=rk) :: symbol
+
+    ! central stencils (no composite), exactly the ones the RHS uses for the viscous term
+    call setup_FD2_stencil(FD2_order_discretization_in, FD2, fd2_start, fd2_end)
+
+    rho = 0.0_rk
+    do k = 0, nsamples-1
+        theta = acos(-1.0_rk) * dble(k) / dble(nsamples-1)
+        symbol = (0.0_rk, 0.0_rk)
+        do j = fd2_start, fd2_end
+            symbol = symbol + FD2(j) * exp(cmplx(0.0_rk, dble(j)*theta, kind=rk))
+        enddo
+        rho = max(rho, abs(symbol))
+    enddo
+
+    deallocate(FD2)
+end function FD2_spectral_radius
 
 !**********************************************************************************************
 !> \brief setup the FD1X cross-derivative stencils

@@ -12,7 +12,7 @@ module module_acm
   ! just use any reader you feel comfortable with, as long as you can read the parameters
   ! from a file.
   use module_ini_files_parser_mpi
-  use module_operators, only : compute_vorticity, compute_divergence, compute_derivative, compute_dissipation, compute_gradient, compute_laplacian
+  use module_operators, only : compute_vorticity, compute_divergence, compute_derivative, compute_dissipation, compute_gradient, compute_laplacian, FD2_spectral_radius
   use module_helpers
   use module_timing
   use module_geometry
@@ -373,21 +373,11 @@ contains
     call read_param_mpi(FILE, 'Time', 'CFL', params_acm%CFL, 1.0_rk   )
     call read_param_mpi(FILE, 'Time', 'CFL_eta', params_acm%CFL_eta, 0.99_rk   )
 
-    ! default value for CFL_nu (diffusion time step restriction) depends on the scheme and the dimension.
-    ! The defaults are valid only for RK4 (this is the factor 2.79). Note this condition is relevant only for
+    ! default value for CFL_nu (diffusion time step restriction): 0.95*2.79/(rho*dim), where rho is the spectral radius
+    ! of the 1D FD2 stencil used by the RHS for the viscous term (4 for FD2, 16/3 for FD4, 272/45 for FD6, ...).
+    ! The default is valid only for RK4 (this is the factor 2.79). Note this condition is relevant only for
     ! small reynolds numbers, as the diffusion is not important for the time step at higher Re.
-    if (params_acm%discretization(4:4) == "2") then
-        call read_param_mpi(FILE, 'Time', 'CFL_nu', params_acm%CFL_nu, 0.95_rk*2.79_rk/(4.000_rk*dble(params_acm%dim)) )
-
-    elseif (params_acm%discretization(4:4) == "4") then
-        call read_param_mpi(FILE, 'Time', 'CFL_nu', params_acm%CFL_nu, 0.95_rk*2.79_rk/(5.333_rk*dble(params_acm%dim)) )
-
-    elseif (params_acm%discretization(4:4) == "6") then
-        call read_param_mpi(FILE, 'Time', 'CFL_nu', params_acm%CFL_nu, 0.95_rk*2.79_rk/(6.0444_rk*dble(params_acm%dim)) )
-
-    else
-        call abort(62371118, "unknown ACM discretization:"//params_acm%discretization )
-    endif
+    call read_param_mpi(FILE, 'Time', 'CFL_nu', params_acm%CFL_nu, 0.95_rk*2.79_rk/(FD2_spectral_radius(params_acm%discretization)*dble(params_acm%dim)) )
 
     call read_param_mpi(FILE, 'Time', 'time_max', params_acm%T_end, 1.0_rk   )
 
