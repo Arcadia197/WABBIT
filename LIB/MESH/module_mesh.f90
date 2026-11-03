@@ -36,6 +36,7 @@ contains
 #include "multigrid_vcycle.f90"
 #include "projection_solve.f90"
 #include "poisson_operations.f90"
+#include "cycle_diagnostics.f90"
 
 ! Mesh operations
 #include "securityZone_tree.f90"

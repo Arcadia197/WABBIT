@@ -197,7 +197,7 @@ subroutine proto_pressure_multigrid(params)
     !    in order to avoid leaf-wise refinement status hacking for now
     ! ------------------------------------------------------------
 
-    call init_t_file('poisson_solver.t', .true., (/ "           time", "        i_cycle", "  residual_Linf", "   residual_rel" /))
+    call init_t_file('poisson_solver.t', .true., (/ "           time", "        i_cycle", "  residual_Linf", "   residual_rel", "       solve_id" /))
 
     call init_t_file('multigrid-cycle.t', .true., (/'    residual L2', '    residual L1', 'residual Linfty', '           time'/))
     call init_t_file('multigrid-iteration.t', .true., (/'direction', 'iteration', '     time'/))
@@ -523,7 +523,7 @@ subroutine proto_NSI_EE(params)
     call init_t_file('balancing.t', overwrite)
     call init_t_file('block_xfer.t', overwrite)
     call init_t_file('thresholding.t', overwrite)
-    call init_t_file('poisson_solver.t', overwrite, (/ "           time", "        i_cycle", "  residual_Linf", "   residual_rel" /))
+    call init_t_file('poisson_solver.t', overwrite, (/ "           time", "        i_cycle", "  residual_Linf", "   residual_rel", "       solve_id" /))
 
     if (params%rank==0) then
         call Initialize_runtime_control_file()
@@ -783,28 +783,26 @@ subroutine proto_NSI_EE(params)
         ! save data and others do not. this is a rare but severe problem, to solve it, synchronize:
         call MPI_BCAST( it_is_time_to_save_data, 1, MPI_LOGICAL, 0, WABBIT_COMM, mpicode )
 
-        ! let's do some regular projections - this can be changed by a parameter
-        if (modulo(iteration, params%nprojection_NSI)==0) then
-            ! Maybe u is not completely divergence free in the discrete sense, so we do one projection in order to get a divergence free velocity field
-            t3 = MPI_wtime()
-            call sync_ghosts_tree( params, hvy_block(:,:,:,1:params%dim,:), tree_ID_flow )
-            call toc( "timestep: sync_ghost_tree", 21, MPI_wtime()-t3)
-            t3 = MPI_wtime()
-            call compute_divergence_tree(params, hvy_block(:,:,:,1:params%dim,:), hvy_tmp(:,:,:,params%dim+2,:), order_disc_pressure, tree_ID_flow)
-            call toc( "timestep: compute_divergence_tree", 23, MPI_wtime()-t3)
-            t3 = MPI_wtime()
-            call sync_ghosts_tree( params, hvy_tmp(:,:,:,params%dim+2:params%dim+2,:), tree_ID_flow )
-            call toc( "timestep: sync_ghost_tree", 21, MPI_wtime()-t3)
-            t3 = MPI_wtime()
-            call multigrid_solve(params, hvy_tmp(:,:,:,params%dim+3:params%dim+3,:), hvy_tmp(:,:,:,params%dim+2:params%dim+2,:), hvy_tmp(:,:,:,params%dim+4:size(hvy_tmp,4),:), tree_ID_flow, init_0=.true., verbose=.false., hvy_full=hvy_tmp)
-            call toc( "timestep: multigrid_solve", 24, MPI_wtime()-t3)
-            t3 = MPI_wtime()
-            call sync_ghosts_tree( params, hvy_tmp(:,:,:,params%dim+3:params%dim+3,:), tree_ID_flow )
-            call toc( "timestep: sync_ghost_tree", 21, MPI_wtime()-t3)
-            t3 = MPI_wtime()
-            call compute_projection(params, hvy_block(:,:,:,1:params%dim,:), hvy_tmp(:,:,:,params%dim+3:params%dim+3,:), hvy_block(:,:,:,1:params%dim,:), order_disc_pressure, tree_ID_flow, 1.0_rk)
-            call toc( "timestep: compute_projection", 25, MPI_wtime()-t3)
-        endif
+        ! projection every time step
+        ! Maybe u is not completely divergence free in the discrete sense, so we do one projection in order to get a divergence free velocity field
+        t3 = MPI_wtime()
+        call sync_ghosts_tree( params, hvy_block(:,:,:,1:params%dim,:), tree_ID_flow )
+        call toc( "timestep: sync_ghost_tree", 21, MPI_wtime()-t3)
+        t3 = MPI_wtime()
+        call compute_divergence_tree(params, hvy_block(:,:,:,1:params%dim,:), hvy_tmp(:,:,:,params%dim+2,:), order_disc_pressure, tree_ID_flow)
+        call toc( "timestep: compute_divergence_tree", 23, MPI_wtime()-t3)
+        t3 = MPI_wtime()
+        call sync_ghosts_tree( params, hvy_tmp(:,:,:,params%dim+2:params%dim+2,:), tree_ID_flow )
+        call toc( "timestep: sync_ghost_tree", 21, MPI_wtime()-t3)
+        t3 = MPI_wtime()
+        call multigrid_solve(params, hvy_tmp(:,:,:,params%dim+3:params%dim+3,:), hvy_tmp(:,:,:,params%dim+2:params%dim+2,:), hvy_tmp(:,:,:,params%dim+4:size(hvy_tmp,4),:), tree_ID_flow, init_0=.true., verbose=.false., hvy_full=hvy_tmp)
+        call toc( "timestep: multigrid_solve", 24, MPI_wtime()-t3)
+        t3 = MPI_wtime()
+        call sync_ghosts_tree( params, hvy_tmp(:,:,:,params%dim+3:params%dim+3,:), tree_ID_flow )
+        call toc( "timestep: sync_ghost_tree", 21, MPI_wtime()-t3)
+        t3 = MPI_wtime()
+        call compute_projection(params, hvy_block(:,:,:,1:params%dim,:), hvy_tmp(:,:,:,params%dim+3:params%dim+3,:), hvy_block(:,:,:,1:params%dim,:), order_disc_pressure, tree_ID_flow, 1.0_rk)
+        call toc( "timestep: compute_projection", 25, MPI_wtime()-t3)
 
         ! ! we reconstruct the pressure if we do statistics or save data to have it in respective accuracy
         ! ! if (it_is_time_to_save_data .or. (modulo(iteration, params%nsave_stats)==0).or.(abs(mod(time, params%tsave_stats))<1e-12_rk)) then

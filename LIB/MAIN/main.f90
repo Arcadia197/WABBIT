@@ -191,7 +191,7 @@ program main
     !*******************************************************************
     if (params%physics_type == "NSPP" .or. params%inicond_helmholtz_projection) then
         t4 = MPI_wtime()
-        call helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID_flow, force_convergence=.true., diagnostics=.true.)
+        call helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID_flow, force_convergence=.true., diagnostics=.true., solve_id=-2)
 
         if (params%physics_type == "ACM-new") then
             ! we have changed the velocity, thus we need to update the pressure field for ACM as well to be consistent.
@@ -262,8 +262,11 @@ program main
         tfile_headers(2) = "i_cycle"
         tfile_headers(3) = "residual_Linf"
         tfile_headers(4) = "residual_rel"
-        call init_t_file('poisson_solver.t', overwrite, tfile_headers(1:4) )
+        tfile_headers(5) = "solve_id"   ! 1.. = RK stage, 0 = Helmholtz projection, -1 = pressure from velocity, -2 = initial condition
+        call init_t_file('poisson_solver.t', overwrite, tfile_headers(1:5) )
     endif
+
+    call init_cycle_diagnostics(params, overwrite)   ! only with [Debug] debug_cycle_diagnostics=1
 
     if (rank==0) then
         call Initialize_runtime_control_file()
@@ -344,6 +347,20 @@ program main
         endif
         call toc( "TOPLEVEL: refinement", 10, MPI_wtime()-t4)
         Nblocks_rhs = lgt_n(tree_ID_flow)
+        call cycle_diagnostics(params, hvy_block, hvy_tmp, tree_ID_flow, 1, time)   ! after refinement
+
+        !***********************************************************************
+        ! Helmholtz projection (NSPP): right before the time step. Refinement and the adaptation of the last step create
+        ! divergence, which the pressure solves of the RK stages do not remove (they remove the divergence of the right-hand
+        ! side only), so the field entering the time step is projected. The statistics (div.t, ...) then report the
+        ! divergence that the time step itself creates.
+        !***********************************************************************
+        if (params%physics_type == "NSPP") then
+            t4 = MPI_wtime()
+            call helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID_flow)
+            call toc( "TOPLEVEL: Helmholtz projection", 19, MPI_wtime()-t4)
+        endif
+        call cycle_diagnostics(params, hvy_block, hvy_tmp, tree_ID_flow, 2, time)   ! after the projection
 
         Jmin1 = minActiveLevel_tree(tree_ID_flow)
         Jmax1 = maxActiveLevel_tree(tree_ID_flow)
@@ -364,15 +381,7 @@ program main
             t4 = MPI_wtime()
             call timeStep_tree( time, dt, iteration, params, hvy_block, hvy_work, hvy_mask, hvy_tmp, tree_ID_flow )
             call toc( "TOPLEVEL: time stepper", 11, MPI_wtime()-t4)
-
-            !*******************************************************************
-            ! Helmholtz projection (if enabled for NSPP)
-            !*******************************************************************
-            if (params%physics_type == "NSPP") then
-                t4 = MPI_wtime()
-                call helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID_flow)
-                call toc( "TOPLEVEL: Helmholtz projection", 19, MPI_wtime()-t4)
-            endif
+            call cycle_diagnostics(params, hvy_block, hvy_tmp, tree_ID_flow, 3, time)   ! after the time step
 
             ! determine if it is time to save data
             call is_it_time_to_save_data( params, time, iteration, tstart, it_is_time_to_save_data, it_is_time_to_save_backup )
@@ -451,6 +460,7 @@ program main
         endif
         call toc( "TOPLEVEL: adapt mesh", 14, MPI_wtime()-t4)
         Nblocks = lgt_n(tree_ID_flow)
+        call cycle_diagnostics(params, hvy_block, hvy_tmp, tree_ID_flow, 4, time)   ! after adaptation, writes the row
 
         !***********************************************************************
         ! Write fields to HDF5 file

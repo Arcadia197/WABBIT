@@ -31,7 +31,7 @@
 !! iterate inside an FGMRES cycle is formed in slot i_hist, the residual in slot i_hres. timing returns the time
 !! spent in the V-cycles and in A on this rank.
 subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, fd_order, sync_rhs, init_0, time, &
-    hist, i_b0, i_hist, i_hres, timing)
+    hist, i_b0, i_hist, i_hres, timing, solve_id)
     implicit none
 
     !> parameter struct
@@ -65,6 +65,8 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     integer(kind=ik), intent(in), optional :: i_b0, i_hist, i_hres
     !> analysis only: time spent in the V-cycles, in A and in the history calls (incl. hist) on this rank
     real(kind=rk), intent(out), optional   :: timing(1:3)
+    !> label of this solve, last column of poisson_solver.t (codes: see multigrid_solve)
+    integer(kind=ik), intent(in), optional :: solve_id
 
     real(kind=rk), allocatable         :: FD1_l(:), FD1_r(:)
     integer(kind=ik)                   :: FD1_ls, FD1_le, FD1_rs, FD1_re
@@ -76,12 +78,15 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     logical                            :: is_equidistant, done, use_tolerance, dc
     logical, save                      :: scheme_printed = .false.
     character(len=cshort)              :: fname
+    real(kind=rk)                      :: solve_id_set
 
     !---------------------------------------------------------------------------------------------------------------
     ! current solver where it is exact: A = L on equidistant grids if the caller uses the Poisson stencil pair and L
     ! is its composite stencil (the *_comp_* orders; for central orders L is the narrow FD2 stencil, not D_L * D_R).
     ! With less than two free slots there is no room for FGMRES, the current solver is used as well
     if (present(timing)) timing = 0.0_rk
+    solve_id_set = -99.0_rk
+    if (present(solve_id)) solve_id_set = dble(solve_id)
     is_equidistant = (minActiveLevel_tree(tree_ID) == maxActiveLevel_tree(tree_ID))
     if (params%poisson_exact_projection .and. size(i_free) < 2 .and. params%rank == 0 .and. .not. scheme_printed) then
         write(*, '(A)') "WARNING projection_solve: less than 2 free slots in hvy_tmp, using the current solver (not exact)"
@@ -90,7 +95,7 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     if (.not. params%poisson_exact_projection .or. size(i_free) < 2 .or. (is_equidistant .and. .not. present(hist) .and. &
         trim(fd_order) == trim(params%poisson_order) .and. index(params%poisson_order, "_comp_") > 0)) then
         call multigrid_solve(params, hvy_v(:,:,:,i_phi:i_phi,:), hvy_v(:,:,:,i_b:i_b,:), hvy_v(:,:,:,i_work:i_work,:), &
-            tree_ID, init_0=init_0, verbose=.false., hvy_full=hvy_v, time=time)
+            tree_ID, init_0=init_0, verbose=.false., hvy_full=hvy_v, time=time, solve_id=solve_id)
         return
     endif
 
@@ -100,7 +105,7 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     if (.not. all(params%periodic_BC(1:params%dim))) then
         ! the gradient components of A are synced one at a time, i.e. symmetry conditions would treat all of them as
         ! the first component of a vector
-        call abort(261009, "projection_solve: the exact projection is implemented for periodic boundaries only")
+        call abort(261009, "projection_solve: the exact projection is implemented for periodic boundaries only, use poisson_exact_projection=0")
     endif
 
     t_start = MPI_Wtime()
@@ -238,7 +243,7 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     if (params%rank == 0) then
         write(*, '(A, i0, A, es10.3, A, es10.3)') "   Final Residual after ", n_vc, " it (exact projection), Linfty: ", &
             r_Linf, " , rel to RHS: ", r_Linf / max(b_norm(1), tiny(1.0_rk))
-        call append_t_file('poisson_solver.t', (/ time, dble(n_vc), r_Linf, r_Linf / max(b_norm(1), tiny(1.0_rk)) /))
+        call append_t_file('poisson_solver.t', (/ time, dble(n_vc), r_Linf, r_Linf / max(b_norm(1), tiny(1.0_rk)), solve_id_set /))
     endif
 
     call prune_fulltree2leafs(params, tree_ID)

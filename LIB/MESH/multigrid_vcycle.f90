@@ -1,4 +1,4 @@
-subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, verbose, hvy_full, time)
+subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, verbose, hvy_full, time, solve_id)
     implicit none
 
     !> parameter struct
@@ -15,6 +15,9 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
     !> full physically allocated contiguous array to avoid Intel compiler issues with array sections
     real(kind=rk), intent(inout), optional :: hvy_full(:, :, :, :, :)
     real(kind=rk), intent(in), optional :: time  !< current time, used only for logging
+    !> label of this solve, last column of poisson_solver.t: 1, 2, ... = RK stage of the time step, 0 = Helmholtz projection
+    !> of the time loop, -1 = pressure from velocity, -2 = initial condition, -99 = not labelled (the caller passed none)
+    integer(kind=ik), intent(in), optional :: solve_id
 
     integer(kind=ik)                   :: k_block, lgt_ID, hvy_id, ic, i_cycle
     real(kind=rk)                      :: dx(1:3), x0(1:3), residual(1:4*size(hvy_sol,4)), norm_sol(1:size(hvy_sol,4))
@@ -22,7 +25,7 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
     logical                            :: verbose_apply, init0
     character(len=cshort)              :: fname
     integer(kind=ik), dimension(:), allocatable, save :: lgt_refinementStatus_backup
-    real(kind=rk)                      :: time_set
+    real(kind=rk)                      :: time_set, solve_id_set
 
     verbose_apply = .false.
     if (present(verbose)) verbose_apply = verbose
@@ -30,6 +33,8 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
     if (present(init_0)) init0 = init_0
     time_set = 0.0_rk
     if (present(time)) time_set = time
+    solve_id_set = -99.0_rk
+    if (present(solve_id)) solve_id_set = dble(solve_id)
 
     ! For the Mehrstellenverfahren, we actually do solve the system Au = Bb
     ! So before doing anything, we apply the matrix B on b, this is a large tensorial matrix, but we only have to apply this operation once
@@ -143,7 +148,7 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
         write(fname, '(A, i0, A, i0, A)') "(A, i0, A, ", size(hvy_sol,4), "(es10.3, 1x), A, ", size(hvy_sol,4), "(es10.3, 1x))"
         write(*, fname) "   Final Residual after ", i_cycle, " it, Linfty: ", residual(1:size(hvy_sol,4)), " , rel to RHS: ", residual(1:size(hvy_sol,4))/norm_sol(1:size(hvy_sol,4))
 
-        call append_t_file( 'poisson_solver.t', (/ time_set, dble(i_cycle), residual(1:size(hvy_sol,4)), residual(1:size(hvy_sol,4))/norm_sol(1:size(hvy_sol,4)) /) )
+        call append_t_file( 'poisson_solver.t', (/ time_set, dble(i_cycle), residual(1:size(hvy_sol,4)), residual(1:size(hvy_sol,4))/norm_sol(1:size(hvy_sol,4)), solve_id_set /) )
     endif
 
     ! delete all non-leaf blocks with daughters as we for now do not have any use for them

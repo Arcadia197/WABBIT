@@ -220,13 +220,13 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
             enddo
             call projection_solve(params, hvy_tmp, 2, 1, 3, (/ (k, k = 4, size(hvy_tmp,4)) /), tree_ID, &
                 params_nspp%discretization, sync_rhs=.true., &
-                init_0=.not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree))), time=time)
+                init_0=.not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree))), time=time, solve_id=stage_set)
             do k = 1, hvy_n(tree_ID)
                 hvy_id = hvy_active(k, tree_ID)
                 hvy_block(:,:,:,params%dim+1,hvy_id) = hvy_tmp(:,:,:,2,hvy_id)
             enddo
         else
-            call multigrid_solve(params, hvy_block(:,:,:,params%dim+1:params%dim+1,:), hvy_block(:,:,:,1:1,:), hvy_block(:,:,:,2:2,:), tree_ID, init_0=.not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree))), verbose=.false., hvy_full=hvy_block, time=time)
+            call multigrid_solve(params, hvy_block(:,:,:,params%dim+1:params%dim+1,:), hvy_block(:,:,:,1:1,:), hvy_block(:,:,:,2:2,:), tree_ID, init_0=.not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree))), verbose=.false., hvy_full=hvy_block, time=time, solve_id=stage_set)
         endif
 
         ! ! debug save

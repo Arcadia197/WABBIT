@@ -12,7 +12,7 @@
 !> \details
 !! Performs Helmholtz projection: solve Laplacian(phi) = div(u), then u := u - grad(phi)
 !-------------------------------------------------------------------------------
-subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagnostics, force_convergence)
+subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagnostics, force_convergence, solve_id)
     implicit none
 
     type(type_params), intent(inout)   :: params
@@ -22,8 +22,9 @@ subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagn
     integer(kind=ik), intent(in)       :: tree_ID
     logical, intent(in), optional      :: diagnostics
     logical, intent(in), optional      :: force_convergence  !< enforce stricter convergence by using fixed iterations
+    integer(kind=ik), intent(in), optional :: solve_id       !< label in poisson_solver.t (default 0 = projection of the time loop, -2 = initial condition)
 
-    integer(kind=ik) :: k, hvy_id, lgt_id, Bs(1:3), g(1:3), g_RHS
+    integer(kind=ik) :: k, hvy_id, lgt_id, Bs(1:3), g(1:3), g_RHS, solve_id_set
     real(kind=rk) :: x0(1:3), dx(1:3), div_max, div_rms, div_sum
     integer(kind=ik) :: mpicode
     logical :: do_diagnostics, do_force_convergence, sync_rhs
@@ -39,6 +40,8 @@ subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagn
     
     do_force_convergence = .false.
     if (present(force_convergence)) do_force_convergence = force_convergence
+    solve_id_set = 0_ik
+    if (present(solve_id)) solve_id_set = solve_id
     
     ! Temporarily enforce stricter convergence if requested
     if (do_force_convergence) then
@@ -97,7 +100,7 @@ subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagn
     ! solve use the remaining slots of hvy_tmp
     !---------------------------------------------------------------------------
     call projection_solve(params, hvy_tmp, 2, 1, 3, (/ (k, k = 4, size(hvy_tmp,4)) /), tree_ID, params%poisson_order, &
-        sync_rhs=sync_rhs, init_0=.true., time=time)
+        sync_rhs=sync_rhs, init_0=.true., time=time, solve_id=solve_id_set)
 
     !---------------------------------------------------------------------------
     ! Step 3: Correct velocity: u := u - grad(phi)
@@ -299,7 +302,7 @@ subroutine pressure_from_velocity(params, time, hvy_block, hvy_tmp, hvy_mask, tr
     !---------------------------------------------------------------------------
     call multigrid_solve(params, hvy_tmp(:,:,:,1:1,:), hvy_tmp(:,:,:,params%dim+1:params%dim+1,:), &
                          hvy_tmp(:,:,:,2:2,:), tree_ID, &
-                         init_0=.true., verbose=.false., hvy_full=hvy_tmp, time=time)
+                         init_0=.true., verbose=.false., hvy_full=hvy_tmp, time=time, solve_id=-1)
 
     !---------------------------------------------------------------------------
     ! Step 4: Copy pressure to state vector hvy_block(:,:,:,dim+1,:)
@@ -386,7 +389,7 @@ subroutine velocity_from_vorticity(params, hvy_block, hvy_tmp, tree_ID, force_co
         ! Step 2: Solve Laplacian(psi) = -omega
         ! Solution goes to hvy_block(:,:,:,2,:), work array in hvy_block(:,:,:,3,:)
         call multigrid_solve(params, hvy_block(:,:,:,3:3,:), hvy_block(:,:,:,1:1,:), &
-                             hvy_block(:,:,:,2:2,:), tree_ID, init_0=.true., verbose=.false., hvy_full=hvy_block)
+                             hvy_block(:,:,:,2:2,:), tree_ID, init_0=.true., verbose=.false., hvy_full=hvy_block, solve_id=-2)
         
         ! Step 3: Compute velocity from stream function: u = dpsi/dy, v = -dpsi/dx
         call sync_ghosts_tree(params, hvy_block(:,:,:,3:3,:), tree_ID)
@@ -427,7 +430,7 @@ subroutine velocity_from_vorticity(params, hvy_block, hvy_tmp, tree_ID, force_co
             
             ! Step 2: Solve 3 Poisson equations: Laplacian(A_i) = -omega_i
             call multigrid_solve(params, hvy_tmp(:,:,:,1:3,:), hvy_tmp(:,:,:,4:6,:), hvy_tmp(:,:,:,7:9,:), tree_ID, &
-                                init_0=.true., verbose=.false., hvy_full=hvy_tmp)
+                                init_0=.true., verbose=.false., hvy_full=hvy_tmp, solve_id=-2)
             ! Vector potential A is now in hvy_tmp(:,:,:,1:3,:)
             
             ! Step 3: Compute velocity u = curl(A)
@@ -471,7 +474,7 @@ subroutine velocity_from_vorticity(params, hvy_block, hvy_tmp, tree_ID, force_co
                 ! Step 2: Solve Laplacian(A_icomp) = -omega_icomp
                 ! Solution in hvy_block(:,:,:,2,:), work in hvy_block(:,:,:,3,:)
                 call multigrid_solve(params, hvy_block(:,:,:,2:2,:), hvy_block(:,:,:,1:1,:), &
-                                   hvy_block(:,:,:,3:3,:), tree_ID, init_0=.true., verbose=.false., hvy_full=hvy_block)
+                                   hvy_block(:,:,:,3:3,:), tree_ID, init_0=.true., verbose=.false., hvy_full=hvy_block, solve_id=-2)
                 
                 ! Step 3: Store A_icomp in hvy_tmp for later curl computation
                 do k = 1, hvy_n(tree_ID)
