@@ -99,8 +99,9 @@ subroutine helmholtz_projection(params, time, hvy_block, hvy_tmp, tree_ID, diagn
     ! operator is D G instead of L, so that div(u - grad(phi)) is the solver residual. The Krylov vectors of that
     ! solve use the remaining slots of hvy_tmp
     !---------------------------------------------------------------------------
+    ! its relative tolerance is decoupled from the one of the RK stage solves
     call projection_solve(params, hvy_tmp, 2, 1, 3, (/ (k, k = 4, size(hvy_tmp,4)) /), tree_ID, params%poisson_order, &
-        sync_rhs=sync_rhs, init_0=.true., time=time, solve_id=solve_id_set)
+        sync_rhs=sync_rhs, init_0=.true., time=time, solve_id=solve_id_set, tol_rel=params%helmholtz_projection_tol_rel)
 
     !---------------------------------------------------------------------------
     ! Step 3: Correct velocity: u := u - grad(phi)

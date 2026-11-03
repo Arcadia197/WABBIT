@@ -30,8 +30,12 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
     integer(kind=ik)                    :: k, dF, neqn, lgt_id, hvy_id  ! loop variables
     integer(kind=ik)                    :: g, hvy_id_mask, Bs(1:3), grhs, Neqn_RHS, Jmin_active, Jmax_active, stage_set
     integer(kind=2)                     :: n_domain(1:3)
-    real(kind=rk)                       :: t0, t1
-    logical                             :: is_equidistant
+    real(kind=rk)                       :: t0, t1, norm_b(1:1)
+    real(kind=rk), save                 :: b_norm_stage1 = 0.0_rk   !< max|D S F| of the classical stage-1 solve of this step
+    logical                             :: is_equidistant, incremental, start_zero
+    real(kind=rk), allocatable          :: norm_ref                 !< reference norm of the relative stop test (allocated: increment solves)
+    integer(kind=ik)                    :: i_p1                     !< slot of hvy_tmp that keeps p_1 for stage 4, 0: none
+    character(len=cshort)               :: order_predictor_saved
 
     Neqn_RHS = params%n_eqn_rhs
     Bs   = params%Bs
@@ -147,28 +151,31 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
     ! This has to be done at exactly this position. However, we will need to sync some variables, which you usually would love to avoid in the RHS_wrapper
     if (params%PDE_type == "mixed_hyperbolic_parabolic") then
 
-        ! TBH, this makes less sense to me somehow, I am skipping it for now as for several stages we always alternate between computing P and dP
-        ! ! incremental version, add old pressure gradient so that new pressure to be solved is only Dp - this reduces the amount of iterations for projection needed to converge, however it only really helps for adaptive grids. We assume that hvy_block contains the pressure of the last MultiGrid solve
-        ! if (stage > 1 .and. .not. is_equidistant) then
-        !     do k = 1, hvy_n(tree_ID)
-        !         hvy_id = hvy_active(k, tree_ID)
-        !         call hvy2lgt( lgt_id, hvy_id, params%rank, params%number_blocks )
-        !         call get_block_spacing_origin( params, lgt_id, x0, dx )
-
-        !         ! check if block is adjacent to a boundary of the domain, if this is the case we use one sided stencils
-        !         if ( .not. All(params%periodic_BC) ) call get_adjacent_boundary_surface_normal( params, lgt_id, n_domain )
-
-        !         ! the hvy_mask array is allocated even if the mask is not used, it has then the size (1,1,1,1,1)
-        !         ! (a single point). Therefore, pay attention not to pass hvy_mask(:,:,:,:,hvy_id) with hvy_id>1.
-        !         ! Note: hvy_mask is not used if in this case by the RHS routines...
-        !         hvy_id_mask = hvy_id
-        !         if (size(hvy_mask,5) == 1) hvy_id_mask = 1
-
-        !         ! RHS_meta will assume the pressure to be in component dim+1, it then will update the hvy_rhs with the pressure gradient term
-        !         call RHS_meta( params%physics_type, time, hvy_block(:,:,:,:,hvy_id), g, x0, dx, &
-        !             hvy_rhs(:,:,:,:,hvy_id), hvy_mask(:,:,:,:,hvy_id), "pressure_gradient_stage", n_domain )
-        !     enddo
-        ! endif
+        ! incremental pressure (poisson_incremental): from stage 2 on, subtract the gradient of the pressure p_old of the previous
+        ! stage from the RHS, so that the Poisson problem below gives only its increment dp. p_old is in hvy_block, as the
+        ! time stepper leaves the pressure alone. Stage 1 solves classically, as the grid changes between the time steps
+        incremental = params%poisson_incremental .and. stage_set > 1
+        i_p1 = stage1_pressure_slot(params, size(hvy_tmp,4))
+        if (incremental) then
+            call stage4_start_pressure(params, stage_set, i_p1, hvy_block, hvy_tmp, tree_ID)
+            ! the time stepper syncs only 1:n_eqn_rhs. Sync with the Poisson predictor, as the solver does for the pressure it
+            ! returns, so that G p_old + G dp is the gradient of p_old + dp also in the interface strips; linear in
+            ! theory, but without this sync the fields change at rounding level (1e-16, adaptive 2D), so it is kept
+            order_predictor_saved = params%order_predictor
+            params%order_predictor = params%poisson_order_predictor
+            call sync_ghosts_tree( params, hvy_block(:,:,:,params%dim+1:params%dim+1,:), tree_ID )
+            params%order_predictor = order_predictor_saved
+            do k = 1, hvy_n(tree_ID)
+                hvy_id = hvy_active(k, tree_ID)
+                call hvy2lgt( lgt_id, hvy_id, params%rank, params%number_blocks )
+                call get_block_spacing_origin( params, lgt_id, x0, dx )
+                if ( .not. All(params%periodic_BC) ) call get_adjacent_boundary_surface_normal( params, lgt_id, n_domain )
+                hvy_id_mask = hvy_id
+                if (size(hvy_mask,5) == 1) hvy_id_mask = 1
+                call RHS_meta( params%physics_type, time, hvy_block(:,:,:,:,hvy_id), g, x0, dx, &
+                    hvy_rhs(:,:,:,:,hvy_id), hvy_mask(:,:,:,:,hvy_id_mask), "pressure_gradient_stage", n_domain )
+            enddo
+        endif
 
         ! sync RHS
         t1 = MPI_wtime()
@@ -205,8 +212,19 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
         ! ! debug save
         ! call saveHDF5_tree("divRHS_0.h5", 0.0_rk, 0, 1, params, hvy_block(:,:,:,:,:), tree_ID, no_sync=.false.)
 
+        ! incremental pressure: the increments of stages 2+ get the stop target of the classical stage-1 solve,
+        ! tol_rel * max|D S F|, i.e. their relative test refers to the norm of the stage-1 RHS (their own RHS is much smaller,
+        ! so tol_rel relative to it would be a far stricter target than the classical solve has)
+        if (params%poisson_incremental .and. stage_set == 1) then
+            call componentWiseNorm_tree(params, hvy_block(:,:,:,1:1,:), tree_ID, "Linfty", norm_b, threshold_state_vector=.false.)
+            b_norm_stage1 = norm_b(1)
+        endif
+        if (incremental) norm_ref = b_norm_stage1
+
         ! MultiGrid solve, we sync before and after in multigrid_solve
         ! Logic here: We can reuse the latest solution as initialization if the grid is equidistant and we are sure it is the same as before
+        ! (the increment dp always starts from zero)
+        start_zero = incremental .or. .not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree)))
         t1 = MPI_wtime()
         if (params%poisson_exact_stages) then
             ! exact projection of the RHS: solve D G p = D rhs with the stage's own D (RHS sync, NSPP stencils), so that
@@ -218,15 +236,26 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
                 hvy_tmp(:,:,:,1,hvy_id) = hvy_block(:,:,:,1,hvy_id)
                 hvy_tmp(:,:,:,2,hvy_id) = hvy_block(:,:,:,params%dim+1,hvy_id)
             enddo
-            call projection_solve(params, hvy_tmp, 2, 1, 3, (/ (k, k = 4, size(hvy_tmp,4)) /), tree_ID, &
-                params_nspp%discretization, sync_rhs=.true., &
-                init_0=.not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree))), time=time, solve_id=stage_set)
+            ! incremental: dp starts from zero, the old p stays in hvy_block and is temporarily stored in the then free b slot. The
+            ! last slot of hvy_tmp may keep p_1 (i_p1), then it is no Krylov slot. Every stage solve does at least one V-cycle
+            call projection_solve(params, hvy_tmp, 2, 1, 3, (/ (k, k = 4, size(hvy_tmp,4) - merge(1, 0, i_p1 > 0)) /), &
+                tree_ID, params_nspp%discretization, sync_rhs=.true., init_0=start_zero, time=time, &
+                solve_id=stage_set, n_vc_min=1, norm_ref=norm_ref)
             do k = 1, hvy_n(tree_ID)
                 hvy_id = hvy_active(k, tree_ID)
+                if (incremental) hvy_tmp(:,:,:,1,hvy_id) = hvy_block(:,:,:,params%dim+1,hvy_id)
                 hvy_block(:,:,:,params%dim+1,hvy_id) = hvy_tmp(:,:,:,2,hvy_id)
             enddo
         else
-            call multigrid_solve(params, hvy_block(:,:,:,params%dim+1:params%dim+1,:), hvy_block(:,:,:,1:1,:), hvy_block(:,:,:,2:2,:), tree_ID, init_0=.not.(is_equidistant .and. (stage_set > 1 .or. (stage_set == 1 .and. .not. params%adapt_tree))), verbose=.false., hvy_full=hvy_block, time=time, solve_id=stage_set)
+            ! incremental: dp is solved in the pressure slot, so the old p is temporarily stored in hvy_tmp (slot 1 is free during the stage;
+            ! multigrid_solve may load-balance hvy_block but restores its block order, so the temporarily stored p stays aligned)
+            if (incremental) then
+                do k = 1, hvy_n(tree_ID)
+                    hvy_id = hvy_active(k, tree_ID)
+                    hvy_tmp(:,:,:,1,hvy_id) = hvy_block(:,:,:,params%dim+1,hvy_id)
+                enddo
+            endif
+            call multigrid_solve(params, hvy_block(:,:,:,params%dim+1:params%dim+1,:), hvy_block(:,:,:,1:1,:), hvy_block(:,:,:,2:2,:), tree_ID, init_0=start_zero, verbose=.false., hvy_full=hvy_block, time=time, solve_id=stage_set, norm_ref=norm_ref)
         endif
 
         ! ! debug save
@@ -252,7 +281,12 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
             ! RHS_meta will assume the pressure to be in component dim+1, it then will update the hvy_rhs with the pressure gradient term
             call RHS_meta( params%physics_type, time, hvy_block(:,:,:,:,hvy_id), g, x0, dx, &
              hvy_rhs(:,:,:,:,hvy_id), hvy_mask(:,:,:,:,hvy_id_mask), "pressure_gradient_stage", n_domain )
+
+            ! incremental pressure: the RHS now holds F - G p_old - G dp, the pressure becomes p = p_old + dp (ghost nodes
+            ! included, both are synced) and is the old pressure of the next stage
+            if (incremental) hvy_block(:,:,:,params%dim+1,hvy_id) = hvy_block(:,:,:,params%dim+1,hvy_id) + hvy_tmp(:,:,:,1,hvy_id)
         enddo
+        call stage1_store_pressure(params, stage_set, i_p1, hvy_block, hvy_tmp, tree_ID)
         call toc( "RHS_wrapper::NSPP-pressure-poisson-solver", 10037, MPI_wtime()-t1 )
 
         ! ! debug save
@@ -277,6 +311,72 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
 
     call toc( "RHS_wrapper (TOTAL)", 30, MPI_wtime()-t0 )
 end subroutine RHS_wrapper
+
+
+
+!!! The following is a very special optimization - for incremental pressure,
+!   we compute dp = p_new - p_old. It acts like a warm-start, and this is more exact if we use the pressure of the previous stage at the time of !   the current stage, which sometimes can be done via extrapolation. For classical RK4, the stage times are 0, 1/2, 1/2, 1 and we can extrapolate the fourth stage pressure: p_old = 2 p_3 - p_1
+
+!> Slot of hvy_tmp that keeps the stage-1 pressure p_1 for the start pressure of stage 4 (see stage4_start_pressure), 0 if
+!! there is none (then the optimization is silently off). hvy_tmp is free between the stages (only the mask generation writes it,
+!! and only with penalization and force_maxlevel_dealiasing, then no slot); p_1 takes its last slot if the stage solve does not need it: the
+!! exact projection uses the first 2m of the free slots 4:nslots, m = max(1, min(poisson_exact_m, n_free/2)), so the last slot
+!! is free if removing it leaves m unchanged (the L solver uses none of them). Only for the stage times 0, 1/2, 1/2, 1 of
+!! the classical RK4, which the time extrapolation of stage 4 assumes
+integer(kind=ik) function stage1_pressure_slot(params, nslots)
+    implicit none
+    type (type_params), intent(in)  :: params
+    integer(kind=ik), intent(in)    :: nslots
+    integer(kind=ik)                :: n_free
+
+    stage1_pressure_slot = 0
+    if (.not. params%poisson_incremental .or. (params%penalization .and. params%force_maxlevel_dealiasing)) return
+    if (size(params%butcher_tableau,1) /= 5) return
+    if (any(abs(params%butcher_tableau(1:4,1) - (/ 0.0_rk, 0.5_rk, 0.5_rk, 1.0_rk /)) > 1.0e-12_rk)) return
+    n_free = nslots - 3
+    if (params%poisson_exact_stages) then
+        if (n_free < 3) return
+        if (min(params%poisson_exact_m, (n_free-1)/2) < min(params%poisson_exact_m, n_free/2)) return
+    endif
+    stage1_pressure_slot = nslots
+end function stage1_pressure_slot
+
+
+!> Incremental pressure, stage 4: p_old = 2 p_3 - p_1, the linear extrapolation to the stage time 1 from the stage times 1/2
+!! (p_3, the pressure of the previous stage, in hvy_block) and 0 (p_1, kept in slot i_p1 of hvy_tmp), instead of p_3 alone.
+!! In every other stage, and without slot (i_p1 = 0), nothing is done: p_old stays the pressure of the previous stage
+subroutine stage4_start_pressure(params, stage, i_p1, hvy_block, hvy_tmp, tree_ID)
+    implicit none
+    type (type_params), intent(in)  :: params
+    integer(kind=ik), intent(in)    :: stage, i_p1, tree_ID
+    real(kind=rk), intent(inout)    :: hvy_block(:, :, :, :, :)
+    real(kind=rk), intent(in)       :: hvy_tmp(:, :, :, :, :)
+    integer(kind=ik)                :: k, hvy_id
+
+    if (stage /= 4 .or. i_p1 == 0) return
+    do k = 1, hvy_n(tree_ID)
+        hvy_id = hvy_active(k, tree_ID)
+        hvy_block(:,:,:,params%dim+1,hvy_id) = 2.0_rk * hvy_block(:,:,:,params%dim+1,hvy_id) - hvy_tmp(:,:,:,i_p1,hvy_id)
+    enddo
+end subroutine stage4_start_pressure
+
+
+!> Incremental pressure, stage 1: keep p_1 (ghost nodes included) in slot i_p1 of hvy_tmp for stage4_start_pressure.
+!! In every other stage, and without slot (i_p1 = 0), nothing is done
+subroutine stage1_store_pressure(params, stage, i_p1, hvy_block, hvy_tmp, tree_ID)
+    implicit none
+    type (type_params), intent(in)  :: params
+    integer(kind=ik), intent(in)    :: stage, i_p1, tree_ID
+    real(kind=rk), intent(in)       :: hvy_block(:, :, :, :, :)
+    real(kind=rk), intent(inout)    :: hvy_tmp(:, :, :, :, :)
+    integer(kind=ik)                :: k, hvy_id
+
+    if (stage /= 1 .or. i_p1 == 0) return
+    do k = 1, hvy_n(tree_ID)
+        hvy_id = hvy_active(k, tree_ID)
+        hvy_tmp(:,:,:,i_p1,hvy_id) = hvy_block(:,:,:,params%dim+1,hvy_id)
+    enddo
+end subroutine stage1_store_pressure
 
 
 

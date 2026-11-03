@@ -181,6 +181,12 @@ subroutine ini_file_to_params( params, filename )
    call read_param_mpi(FILE, 'Discretization', 'poisson_exact_switch', params%poisson_exact_switch, 0.3_rk)
    call read_param_mpi(FILE, 'Discretization', 'poisson_exact_m', params%poisson_exact_m, 2)
    call read_param_mpi(FILE, 'Discretization', 'poisson_exact_sweeps', params%poisson_exact_sweeps, 2)
+   call read_param_mpi(FILE, 'Discretization', 'poisson_incremental', params%poisson_incremental, .true.)
+   call read_param_mpi(FILE, 'Discretization', 'helmholtz_projection_tol_rel', params%helmholtz_projection_tol_rel, &
+       params%poisson_cycle_tol_rel)
+   ! the incremental stage solve needs the pressure to survive between the stages, i.e. the time stepper must not touch it
+   if (params%poisson_incremental .and. params%physics_type == "NSPP" .and. params%n_eqn_rhs /= params%dim) &
+      call abort(261103, "poisson_incremental needs number_equations_rhs = dim, otherwise the time stepper overwrites the pressure")
    call read_param_mpi(FILE, 'Discretization', 'FFT_accuracy', params%FFT_accuracy, "spectral")
 
    ! filter frequency

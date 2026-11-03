@@ -109,6 +109,8 @@ module module_params
         logical               :: poisson_exact_sync_rhs=.true.     !< helmholtz_projection: D with the RK sync (D_RHS)
         integer(kind=ik)      :: poisson_exact_m=2, poisson_exact_sweeps=2
         real(kind=rk)         :: poisson_exact_switch=0.3_rk
+        logical               :: poisson_incremental=.true.       !< NSPP RK stage: stages 2+ solve for the increment of p
+        real(kind=rk)         :: helmholtz_projection_tol_rel=0.0_rk  !< NSPP: tol_rel of the Helmholtz projection (set by ini_file_to_params, default poisson_cycle_tol_rel)
         character(len=cshort) :: FFT_accuracy="spectral"  ! FD or spectral
         character(len=cshort) :: refinement_indicator="everywhere"
         character(len=cshort) :: coarsening_indicator="threshold-state-vector"

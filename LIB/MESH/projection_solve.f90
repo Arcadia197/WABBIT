@@ -31,7 +31,7 @@
 !! iterate inside an FGMRES cycle is formed in slot i_hist, the residual in slot i_hres. timing returns the time
 !! spent in the V-cycles and in A on this rank.
 subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, fd_order, sync_rhs, init_0, time, &
-    hist, i_b0, i_hist, i_hres, timing, solve_id)
+    hist, i_b0, i_hist, i_hres, timing, solve_id, n_vc_min, norm_ref, tol_rel)
     implicit none
 
     !> parameter struct
@@ -49,6 +49,8 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     logical, intent(in)                :: sync_rhs
     logical, intent(in)                :: init_0     !< start from phi = 0
     real(kind=rk), intent(in)          :: time       !< only for logging
+    !> 1: at least one V-cycle, even if the initial residual is below the tolerance (default 0: none needed)
+    integer(kind=ik), intent(in), optional :: n_vc_min
     !> analysis only: called after every V-cycle with the slots of the iterate x and of b0 - A x, and with Hbar at the
     !> end of each FGMRES cycle (then x is the iterate after its last step)
     interface
@@ -67,14 +69,18 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     real(kind=rk), intent(out), optional   :: timing(1:3)
     !> label of this solve, last column of poisson_solver.t (codes: see multigrid_solve)
     integer(kind=ik), intent(in), optional :: solve_id
+    !> norm the relative tolerance refers to (default: Linfty norm of b), e.g. an increment solve refers to the full RHS
+    real(kind=rk), intent(in), optional :: norm_ref
+    !> relative tolerance (default params%poisson_cycle_tol_rel)
+    real(kind=rk), intent(in), optional :: tol_rel
 
     real(kind=rk), allocatable         :: FD1_l(:), FD1_r(:)
     integer(kind=ik)                   :: FD1_ls, FD1_le, FD1_rs, FD1_re
-    integer(kind=ik)                   :: m, n_vc, n_vc_max, i, k, hvy_id, lgt_id, is(1:3), ie(1:3)
+    integer(kind=ik)                   :: m, n_vc, n_vc_max, n_min, i, k, hvy_id, lgt_id, is(1:3), ie(1:3)
     integer(kind=ik), allocatable      :: i_v(:), i_z(:)
     integer(kind=ik), allocatable, save :: ref_backup(:)
     real(kind=rk)                      :: c0, b_norm(1:1), r_Linf, r_L2, r_L2_old, d_prev, mean_b, x0(1:3), dx(1:3), mean_phi
-    real(kind=rk)                      :: resid(1:3), t_start, t_block, t_vc, t_A, t_hist
+    real(kind=rk)                      :: resid(1:3), t_start, t_block, t_vc, t_A, t_hist, tol_rel_set, b_norm_rel
     logical                            :: is_equidistant, done, use_tolerance, dc
     logical, save                      :: scheme_printed = .false.
     character(len=cshort)              :: fname
@@ -87,6 +93,8 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     if (present(timing)) timing = 0.0_rk
     solve_id_set = -99.0_rk
     if (present(solve_id)) solve_id_set = dble(solve_id)
+    n_min = 0
+    if (present(n_vc_min)) n_min = n_vc_min
     is_equidistant = (minActiveLevel_tree(tree_ID) == maxActiveLevel_tree(tree_ID))
     if (params%poisson_exact_projection .and. size(i_free) < 2 .and. params%rank == 0 .and. .not. scheme_printed) then
         write(*, '(A)') "WARNING projection_solve: less than 2 free slots in hvy_tmp, using the current solver (not exact)"
@@ -95,7 +103,7 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     if (.not. params%poisson_exact_projection .or. size(i_free) < 2 .or. (is_equidistant .and. .not. present(hist) .and. &
         trim(fd_order) == trim(params%poisson_order) .and. index(params%poisson_order, "_comp_") > 0)) then
         call multigrid_solve(params, hvy_v(:,:,:,i_phi:i_phi,:), hvy_v(:,:,:,i_b:i_b,:), hvy_v(:,:,:,i_work:i_work,:), &
-            tree_ID, init_0=init_0, verbose=.false., hvy_full=hvy_v, time=time, solve_id=solve_id)
+            tree_ID, init_0=init_0, verbose=.false., hvy_full=hvy_v, time=time, solve_id=solve_id, norm_ref=norm_ref, tol_rel=tol_rel)
         return
     endif
 
@@ -161,6 +169,11 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
 
     ! norm of b for relative tolerances, as in multigrid_solve
     call componentWiseNorm_tree(params, hvy_v(:,:,:,i_b:i_b,:), tree_ID, "Linfty", b_norm, threshold_state_vector=.false.)
+    ! the relative stop test compares with tol_rel_set * b_norm_rel
+    tol_rel_set = params%poisson_cycle_tol_rel
+    if (present(tol_rel)) tol_rel_set = tol_rel
+    b_norm_rel = b_norm(1)
+    if (present(norm_ref)) b_norm_rel = norm_ref
 
     !---------------------------------------------------------------------------------------------------------------
     ! full tree for the V-cycles, as in multigrid_solve. The V-cycle uses the refinement status for its own
@@ -190,7 +203,7 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     call apply_A(i_phi, i_free(1), -1.0_rk, accumulate=.true.)
     call leaf_norms(i_free(1), r_Linf, r_L2)
     n_vc = 0
-    done = converged(r_Linf)
+    done = converged(r_Linf) .and. n_min <= 0   ! n_min = 1: at least one cycle (every FGMRES cycle does one as well)
     do while (.not. done .and. n_vc < n_vc_max .and. params%poisson_exact_switch >= 0.0_rk)
         mean_b = leaf_mean(i_b)
         t_block = MPI_Wtime()
@@ -267,7 +280,7 @@ contains
         converged = .false.
         if (use_tolerance) then
             converged = (r_max < params%poisson_cycle_tol_abs) .or. &
-                (r_max / b_norm(1) < params%poisson_cycle_tol_rel .and. b_norm(1) > 1.0e-15_rk)
+                (r_max / b_norm_rel < tol_rel_set .and. b_norm_rel > 1.0e-15_rk)
         endif
     end function converged
 

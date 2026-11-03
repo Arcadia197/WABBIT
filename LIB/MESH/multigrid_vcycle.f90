@@ -1,4 +1,4 @@
-subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, verbose, hvy_full, time, solve_id)
+subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, verbose, hvy_full, time, solve_id, norm_ref, tol_rel)
     implicit none
 
     !> parameter struct
@@ -18,10 +18,14 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
     !> label of this solve, last column of poisson_solver.t: 1, 2, ... = RK stage of the time step, 0 = Helmholtz projection
     !> of the time loop, -1 = pressure from velocity, -2 = initial condition, -99 = not labelled (the caller passed none)
     integer(kind=ik), intent(in), optional :: solve_id
+    !> norm the relative tolerance refers to (default: Linfty norm of this RHS), e.g. an increment solve refers to the full RHS
+    real(kind=rk), intent(in), optional :: norm_ref
+    !> relative tolerance (default params%poisson_cycle_tol_rel)
+    real(kind=rk), intent(in), optional :: tol_rel
 
     integer(kind=ik)                   :: k_block, lgt_ID, hvy_id, ic, i_cycle
     real(kind=rk)                      :: dx(1:3), x0(1:3), residual(1:4*size(hvy_sol,4)), norm_sol(1:size(hvy_sol,4))
-    real(kind=rk)                      :: t_block
+    real(kind=rk)                      :: t_block, tol_rel_set, norm_rel(1:size(hvy_sol,4))
     logical                            :: verbose_apply, init0
     character(len=cshort)              :: fname
     integer(kind=ik), dimension(:), allocatable, save :: lgt_refinementStatus_backup
@@ -59,6 +63,12 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
 
     ! compute norm of RHS for relative tolerances
     call componentWiseNorm_tree(params, hvy_RHS(:,:,:,1:size(hvy_RHS,4),:), tree_ID, "Linfty", norm_sol(1:size(hvy_RHS,4)), threshold_state_vector=.false.)
+
+    ! the relative stop test compares with tol_rel_set * norm_rel
+    tol_rel_set = params%poisson_cycle_tol_rel
+    if (present(tol_rel)) tol_rel_set = tol_rel
+    norm_rel = norm_sol(1:size(hvy_sol,4))
+    if (present(norm_ref)) norm_rel = norm_ref
 
     ! zero RHS (e.g. div(u)=0 exactly for a constant field with central stencils): the zero-mean solution is zero,
     ! and the relative residuals below would be 0/0
@@ -110,10 +120,10 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
             if (i_cycle >= params%poisson_cycle_it) exit
         elseif (params%poisson_cycle_end_criteria == "tolerance") then
             if (all(residual(1:size(hvy_sol,4)) < params%poisson_cycle_tol_abs)) exit
-            ! important, here I have a criteria that is important if norm_sol is close to 0 to avoid division by 0
+            ! important, here I have a criteria that is important if norm_rel is close to 0 to avoid division by 0
             ! However, it can in rare cases really get close to 0 (for Helmholtz projection if div is really close to 0)
             ! even if we start by 1e-10, we can achieve residuals of 1e-24. Maybe we could actually delete the check, but I leave it there for now
-            if (all(residual(1:size(hvy_sol,4))/norm_sol(1:size(hvy_sol,4)) < params%poisson_cycle_tol_rel) .and. all(norm_sol(1:size(hvy_sol,4)) > 1e-15)) exit
+            if (all(residual(1:size(hvy_sol,4))/norm_rel < tol_rel_set) .and. all(norm_rel > 1e-15)) exit
         else
             call abort(250903, "Don't know how to stop! Please choose between 'fixed_iterations' and 'tolerance', thank you :)")
         endif
