@@ -251,7 +251,7 @@ subroutine RHS_wrapper(time, params, hvy_block, hvy_rhs, hvy_mask, hvy_tmp, tree
 
             ! RHS_meta will assume the pressure to be in component dim+1, it then will update the hvy_rhs with the pressure gradient term
             call RHS_meta( params%physics_type, time, hvy_block(:,:,:,:,hvy_id), g, x0, dx, &
-             hvy_rhs(:,:,:,:,hvy_id), hvy_mask(:,:,:,:,hvy_id), "pressure_gradient_stage", n_domain )
+             hvy_rhs(:,:,:,:,hvy_id), hvy_mask(:,:,:,:,hvy_id_mask), "pressure_gradient_stage", n_domain )
         enddo
         call toc( "RHS_wrapper::NSPP-pressure-poisson-solver", 10037, MPI_wtime()-t1 )
 
