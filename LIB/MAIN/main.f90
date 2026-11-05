@@ -84,6 +84,7 @@ program main
     dt            = 0.0_rk
     output_time   = 0.0_rk
     iteration     = 0
+    error_OOM     = .false.
 
     ! init mpi
     call MPI_Init(ierr)
