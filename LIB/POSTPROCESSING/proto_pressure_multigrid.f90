@@ -197,7 +197,7 @@ subroutine proto_pressure_multigrid(params)
     !    in order to avoid leaf-wise refinement status hacking for now
     ! ------------------------------------------------------------
 
-    call init_t_file('poisson_solver.t', .true., (/ "           time", "        i_cycle", "  residual_Linf", "   residual_rel", "       solve_id" /))
+    call init_t_file('poisson_solver.t', .true., (/ "           time", "        i_cycle", "  residual_Linf", "      n_classic", "           path", "        t_solve", "   residual_rel", "       solve_id" /))
 
     call init_t_file('multigrid-cycle.t', .true., (/'    residual L2', '    residual L1', 'residual Linfty', '           time'/))
     call init_t_file('multigrid-iteration.t', .true., (/'direction', 'iteration', '     time'/))
@@ -523,7 +523,7 @@ subroutine proto_NSI_EE(params)
     call init_t_file('balancing.t', overwrite)
     call init_t_file('block_xfer.t', overwrite)
     call init_t_file('thresholding.t', overwrite)
-    call init_t_file('poisson_solver.t', overwrite, (/ "           time", "        i_cycle", "  residual_Linf", "   residual_rel", "       solve_id" /))
+    call init_t_file('poisson_solver.t', overwrite, (/ "           time", "        i_cycle", "  residual_Linf", "      n_classic", "           path", "        t_solve", "   residual_rel", "       solve_id" /))
 
     if (params%rank==0) then
         call Initialize_runtime_control_file()

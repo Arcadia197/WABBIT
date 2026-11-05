@@ -224,6 +224,10 @@ module module_params
         logical :: save_data_before_adapt_tree = .false.
 
         integer :: verbose_level = 1
+        !> pressure-Poisson iterations (i_cycle) of the last solve of each id, 0 = Helmholtz projection, 1.. = RK stage; -1 = no solve.
+        !> Allocated in allocate_forest as 0:(size(butcher_tableau,1)-1). Set by projection_solve/multigrid_solve on rank 0, printed
+        !> as pp-it= in the RUN: line of main and reset there
+        integer, allocatable :: solve_its(:)
 
         ! -------------------------------------------------------------------------------------
         ! filter

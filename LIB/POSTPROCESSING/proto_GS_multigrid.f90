@@ -199,7 +199,7 @@ subroutine proto_GS_multigrid(params)
     !    in order to avoid leaf-wise refinement status hacking for now
     ! ------------------------------------------------------------
 
-    call init_t_file('poisson_solver.t', .true., (/ "           time", "        i_cycle", "  residual_Linf", "   residual_rel", "       solve_id" /))
+    call init_t_file('poisson_solver.t', .true., (/ "           time", "        i_cycle", "  residual_Linf", "      n_classic", "           path", "        t_solve", "   residual_rel", "       solve_id" /))
     
     call init_t_file('multigrid-cycle.t', .true., (/'    residual L2', '    residual L1', 'residual Linfty', '           time'/))
     call init_t_file('multigrid-iteration.t', .true., (/'direction', 'iteration', '     time'/))

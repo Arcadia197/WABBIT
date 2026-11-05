@@ -29,8 +29,9 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
     logical                            :: verbose_apply, init0
     character(len=cshort)              :: fname
     integer(kind=ik), dimension(:), allocatable, save :: lgt_refinementStatus_backup
-    real(kind=rk)                      :: time_set, solve_id_set
+    real(kind=rk)                      :: time_set, solve_id_set, t_start
 
+    t_start = MPI_Wtime()
     verbose_apply = .false.
     if (present(verbose)) verbose_apply = verbose
     init0 = .false.
@@ -155,10 +156,16 @@ subroutine multigrid_solve(params, hvy_sol, hvy_RHS, hvy_work, tree_ID, init_0, 
     if (params%rank == 0 .and. verbose_apply) write(*, '(A, 10(es10.3, 1x))') "--- Mean value: ", residual(3*size(hvy_sol,4)+1:4*size(hvy_sol,4))
 
     if (params%rank == 0 .and. .not. verbose_apply) then
-        write(fname, '(A, i0, A, i0, A)') "(A, i0, A, ", size(hvy_sol,4), "(es10.3, 1x), A, ", size(hvy_sol,4), "(es10.3, 1x))"
-        write(*, fname) "   Final Residual after ", i_cycle, " it, Linfty: ", residual(1:size(hvy_sol,4)), " , rel to RHS: ", residual(1:size(hvy_sol,4))/norm_sol(1:size(hvy_sol,4))
+        if (params%verbose_level >= 3) then
+            write(fname, '(A, i0, A, i0, A)') "(A, i0, A, ", size(hvy_sol,4), "(es10.3, 1x), A, ", size(hvy_sol,4), "(es10.3, 1x))"
+            write(*, fname) "   Final Residual after ", i_cycle, " it, Linfty: ", residual(1:size(hvy_sol,4)), " , rel to RHS: ", residual(1:size(hvy_sol,4))/norm_sol(1:size(hvy_sol,4))
+        endif
 
-        call append_t_file( 'poisson_solver.t', (/ time_set, dble(i_cycle), residual(1:size(hvy_sol,4)), residual(1:size(hvy_sol,4))/norm_sol(1:size(hvy_sol,4)), solve_id_set /) )
+        ! columns: n_classic = i_cycle (all cycles are classic V-cycles), path = 0 (multigrid_solve; 1 = projection_solve exact), t_solve = wall time of this solve
+        call append_t_file( 'poisson_solver.t', (/ time_set, dble(i_cycle), residual(1:size(hvy_sol,4)), dble(i_cycle), 0.0_rk, MPI_Wtime() - t_start, residual(1:size(hvy_sol,4))/norm_sol(1:size(hvy_sol,4)), solve_id_set /) )
+        if (allocated(params%solve_its)) then
+            if (solve_id_set >= lbound(params%solve_its,1) .and. solve_id_set <= ubound(params%solve_its,1)) params%solve_its(nint(solve_id_set)) = i_cycle   ! pp-it= of the RUN: line
+        endif
     endif
 
     ! delete all non-leaf blocks with daughters as we for now do not have any use for them

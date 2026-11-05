@@ -262,9 +262,12 @@ program main
         tfile_headers(1) = "time"
         tfile_headers(2) = "i_cycle"
         tfile_headers(3) = "residual_Linf"
-        tfile_headers(4) = "residual_rel"
-        tfile_headers(5) = "solve_id"   ! 1.. = RK stage, 0 = Helmholtz projection, -1 = pressure from velocity, -2 = initial condition
-        call init_t_file('poisson_solver.t', overwrite, tfile_headers(1:5) )
+        tfile_headers(4) = "n_classic"   ! classic V-cycles (= i_cycle for the multigrid path, before the switch to FGMRES/defect correction for the exact path)
+        tfile_headers(5) = "path"        ! 0 = multigrid_solve, 1 = projection_solve (exact)
+        tfile_headers(6) = "t_solve"     ! wall time of this solve
+        tfile_headers(7) = "residual_rel"
+        tfile_headers(8) = "solve_id"    ! 1.. = RK stage, 0 = Helmholtz projection, -1 = pressure from velocity, -2 = initial condition
+        call init_t_file('poisson_solver.t', overwrite, tfile_headers(1:8) )
     endif
 
     call init_cycle_diagnostics(params, overwrite)   ! only with [Debug] debug_cycle_diagnostics=1
@@ -495,6 +498,15 @@ program main
             ! the goofy factor (1.0+1.0/(2**params%dim)) is to take into account that if we have this many blocks at the RHS level,
             ! we still need a few more for the full tree transform (the virtual nodes which are not leafs) 1.25 in 2D and 1.125 in 3D
             write(*, '(" dt=",es8.1," mem=",i3,"%")', advance='no') dt, nint(((1.0+1.0/(2**params%dim))*dble(Nblocks_rhs+lgt_n(tree_ID_mask))/dble(size(lgt_block,1)))*100.0_rk)
+            ! pressure-Poisson iterations of the solves of this step: Helmholtz projection / RK stages 1.. (-1 = no solve).
+            ! With N_dt_per_grid > 1 the stages show the last inner step
+            ! printed only if at least one solve happened in this step (nothing for physics without Poisson solves, e.g. ACM)
+            if (allocated(params%solve_its)) then
+                if (any(params%solve_its >= 0)) then
+                    write(*, '(" pp-it=",*(i0,:,"/"))', advance='no') params%solve_its
+                    params%solve_its = -1
+                endif
+            endif
             write(*, '("")')  ! line break
 
              ! prior to 11/04/2019, this file was called timesteps_info.t but it was missing some important

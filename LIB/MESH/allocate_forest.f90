@@ -104,6 +104,13 @@ subroutine allocate_forest(params, hvy_block, hvy_work, hvy_tmp, hvy_mask, neqn_
     endif
 
 
+    ! pressure-Poisson iterations per solve (index 0 = Helmholtz projection, 1.. = RK stages), see pp-it= in main
+    if (allocated(params%solve_its)) deallocate(params%solve_its)
+    if (allocated(params%butcher_tableau)) then
+        allocate(params%solve_its(0:size(params%butcher_tableau,1)-1))
+        params%solve_its = -1
+    endif
+
     if (rank == 0) then
         write(*,'(80("─"))')
         write(*,'(A)') "INIT: Beginning memory allocation and initialization."
@@ -421,6 +428,7 @@ subroutine deallocate_forest(params, hvy_block, hvy_work, hvy_tmp, hvy_mask )
     if (allocated(params%threshold_state_vector_component)) deallocate( params%threshold_state_vector_component )
     if (allocated(params%input_files)) deallocate( params%input_files )
     if (allocated(params%butcher_tableau)) deallocate( params%butcher_tableau )
+    if (allocated(params%solve_its)) deallocate( params%solve_its )
     if (allocated(params%symmetry_vector_component)) deallocate( params%symmetry_vector_component )
     if (allocated(params%time_statistics_names)) deallocate( params%time_statistics_names )
     if (allocated(params%field_names)) deallocate( params%field_names )

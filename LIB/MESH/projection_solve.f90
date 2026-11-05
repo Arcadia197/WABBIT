@@ -76,7 +76,7 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
 
     real(kind=rk), allocatable         :: FD1_l(:), FD1_r(:)
     integer(kind=ik)                   :: FD1_ls, FD1_le, FD1_rs, FD1_re
-    integer(kind=ik)                   :: m, n_vc, n_vc_max, n_min, i, k, hvy_id, lgt_id, is(1:3), ie(1:3)
+    integer(kind=ik)                   :: m, n_vc, n_classic, n_vc_max, n_min, i, k, hvy_id, lgt_id, is(1:3), ie(1:3)
     integer(kind=ik), allocatable      :: i_v(:), i_z(:)
     integer(kind=ik), allocatable, save :: ref_backup(:)
     real(kind=rk)                      :: c0, b_norm(1:1), r_Linf, r_L2, r_L2_old, d_prev, mean_b, x0(1:3), dx(1:3), mean_phi
@@ -223,6 +223,7 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     enddo
 
     ! from here on, slot i_b holds the residual r = b - A phi, i.e. the divergence u - G phi would have
+    n_classic = n_vc   ! logged in poisson_solver.t
     call leaf_copy(i_free(1), i_b)
     done = done .or. (n_vc >= n_vc_max)
 
@@ -254,9 +255,14 @@ subroutine projection_solve(params, hvy_v, i_phi, i_b, i_work, i_free, tree_ID, 
     call leaf_add_const(i_phi, -mean_phi)
 
     if (params%rank == 0) then
-        write(*, '(A, i0, A, es10.3, A, es10.3)') "   Final Residual after ", n_vc, " it (exact projection), Linfty: ", &
-            r_Linf, " , rel to RHS: ", r_Linf / max(b_norm(1), tiny(1.0_rk))
-        call append_t_file('poisson_solver.t', (/ time, dble(n_vc), r_Linf, r_Linf / max(b_norm(1), tiny(1.0_rk)), solve_id_set /))
+        if (params%verbose_level >= 3) write(*, '(A, i0, A, es10.3, A, es10.3)') "   Final Residual after ", n_vc, &
+            " it (exact projection), Linfty: ", r_Linf, " , rel to RHS: ", r_Linf / max(b_norm(1), tiny(1.0_rk))
+        ! columns: path = 1 (exact projection; 0 = multigrid_solve), n_classic = classic V-cycles before the switch to A, t_solve = wall time of this solve
+        call append_t_file('poisson_solver.t', (/ time, dble(n_vc), r_Linf, dble(n_classic), 1.0_rk, MPI_Wtime() - t_start, &
+            r_Linf / max(b_norm(1), tiny(1.0_rk)), solve_id_set /))
+        if (allocated(params%solve_its)) then
+            if (solve_id_set >= lbound(params%solve_its,1) .and. solve_id_set <= ubound(params%solve_its,1)) params%solve_its(nint(solve_id_set)) = n_vc   ! pp-it= of the RUN: line
+        endif
     endif
 
     call prune_fulltree2leafs(params, tree_ID)
