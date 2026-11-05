@@ -57,11 +57,12 @@ subroutine calculate_time_step( params, time, iteration, hvy_block, dt, tree_ID 
 
     if ( params%write_method == 'fixed_time' ) then
         ! time step should also fit in output time step size
-        ! criterion: check in time+dt above next output time
+        ! criterion: check in time+dt above next or first output time
         ! if so: truncate time+dt
         ! this is done by checking if we cross a multiple of write_time (and therefore the remainder restarts from 0), this assumes that tsave_stat > dt
         ! We also add a buffer of 1e-12 to avoid numerical issues
-        if ( mod(time+dt, params%write_time) < mod(time+1e-12_rk, params%write_time) .and. .not. abs(mod(time, params%write_time)) < 1e-12_rk .and. time + 1e-12_rk > params%write_time_first) then
+        if ( mod(time+dt, params%write_time) < mod(time+1e-12_rk, params%write_time) .and. .not. abs(mod(time, params%write_time)) < 1e-12_rk .and. &
+             time + (params%write_time - mod(time, params%write_time)) + 1e-12_rk >= params%write_time_first) then
             dt = params%write_time - mod(time, params%write_time)
         end if
     end if
