@@ -1,4 +1,4 @@
-subroutine threshold_block( params, u, refinement_status, level, input_is_WD, norm, indices, eps, verbose_check)
+subroutine threshold_block( params, u, refinement_status, level, input_is_WD, norm, indices, eps, verbose_check, detail_ratio)
     implicit none
 
     !> user defined parameter structure
@@ -19,6 +19,8 @@ subroutine threshold_block( params, u, refinement_status, level, input_is_WD, no
     !> Indices of patch if not the whole interior block should be thresholded, used for securityZone
     integer(kind=ik), intent(in), optional :: indices(1:2, 1:3)
     logical, intent(in), optional       :: verbose_check  !< No matter the value, if this is present we debug
+    !> Optional output: detail / threshold per component (>1 means this component prevents coarsening). 0 for components that are not thresholded
+    real(kind=rk), intent(out), optional :: detail_ratio( size(u,4) )
 
     integer(kind=ik)                    :: dF, l, p_norm, p, idx(2,3), Bs(1:3), g, i_dim, dim, Jmax, nc
     real(kind=rk)                       :: detail( size(u,4) ), eps_use( size(u,4) )
@@ -111,6 +113,9 @@ subroutine threshold_block( params, u, refinement_status, level, input_is_WD, no
 
     ! Normalize threshold with the norm of the component. This corresponds to using a relative vs an absolute EPS.
     if (present(norm)) eps_use(1:nc) = eps_use(1:nc) * norm(1:nc)
+
+    ! this is for logging/debugging purposes, we can output the ratio of detail to threshold. If this is >1, this component prevents coarsening.
+    if (present(detail_ratio)) detail_ratio(:) = detail(:) / max(eps_use(:), tiny(1.0_rk))
 
     ! evaluate criterion: if this blocks detail is smaller than the prescribed precision,
     ! the block is tagged as "wants to coarsen" by setting the tag -1.

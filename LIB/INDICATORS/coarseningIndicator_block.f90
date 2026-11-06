@@ -10,7 +10,7 @@
 ! ********************************************************************************************
 
 subroutine coarseningIndicator_block( params, block_data, block_work, indicator, &
-    refinement_status, norm, level, input_is_WD, indices, verbose_check)
+    refinement_status, norm, level, input_is_WD, indices, verbose_check, detail_ratio)
     ! it is not technically required to include the module here, but for VS code it reduces the number of wrong "errors"
     use module_params
 
@@ -33,6 +33,8 @@ subroutine coarseningIndicator_block( params, block_data, block_work, indicator,
     !> Indices of patch if not the whole interior block should be thresholded, used for securityZone
     integer(kind=ik), intent(in), optional :: indices(1:2, 1:3)
     logical, intent(in), optional       :: verbose_check  !< No matter the value, if this is present we debug
+    !> Optional output (wavelet indicators only): detail / threshold per component, see threshold_block
+    real(kind=rk), intent(out), optional :: detail_ratio(1:size(block_data,4))
 
     ! local variables
     integer(kind=ik) :: k, Jmax, d, j, hvy_id, g, refinement_status_mask, tags, ix, iy, iz, idx(2,3)
@@ -93,9 +95,9 @@ subroutine coarseningIndicator_block( params, block_data, block_work, indicator,
 #endif
 
         if (indicator == "threshold-cvs" .or. indicator == "threshold-image-denoise") then
-            call threshold_block( params, block_data, refinement_status, level, input_is_WD, eps=norm, indices=idx, verbose_check=verbose_check)
+            call threshold_block( params, block_data, refinement_status, level, input_is_WD, eps=norm, indices=idx, verbose_check=verbose_check, detail_ratio=detail_ratio)
         else
-            call threshold_block( params, block_data, refinement_status, level, input_is_WD, norm=norm, indices=idx, verbose_check=verbose_check)
+            call threshold_block( params, block_data, refinement_status, level, input_is_WD, norm=norm, indices=idx, verbose_check=verbose_check, detail_ratio=detail_ratio)
         endif
 
         ! timing for debugging - block based so should not be deployed for productive versions

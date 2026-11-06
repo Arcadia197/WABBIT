@@ -64,6 +64,7 @@ program main
     integer(kind=ik)                    :: k, Nblocks_rhs, Nblocks, it, mpicode, Jmin1, Jmax1
     character(len=2*clong)              :: write_statement  ! dynamically build the output lengths
     character(len=cshort)               :: tfile_headers(1:100)
+    integer(kind=ik)                    :: i_eqn
     character(len=8)                    :: date_now
     character(len=10)                   :: time_now
     ! cpu time variables for running time calculation
@@ -255,6 +256,18 @@ program main
     tfile_headers(5) = "Nxfer_notPosNow"
     call init_t_file('block_xfer.t', overwrite, tfile_headers(1:5) )
     call init_t_file('thresholding.t', overwrite)
+    ! largest wavelet detail / threshold on Jmax blocks, written by coarseningIndicator_tree (see there for the columns)
+    if (2*params%n_eqn+2 <= size(tfile_headers)) then
+        tfile_headers(1) = "time"
+        do i_eqn = 1, params%n_eqn
+            write(tfile_headers(1+i_eqn), '(A,i0)') "max_ratio_c", i_eqn
+            write(tfile_headers(1+params%n_eqn+i_eqn), '(A,i0)') "N_blocks_above_c", i_eqn
+        enddo
+        tfile_headers(2+2*params%n_eqn) = "N_blocks_above_any"
+        call init_t_file('jmax_detail.t', overwrite, tfile_headers(1:2+2*params%n_eqn) )
+    else
+        call init_t_file('jmax_detail.t', overwrite)
+    endif
 
     call init_probes_file(params, overwrite)
 
@@ -460,7 +473,7 @@ program main
             ! actual coarsening (including the mask function)
             ! if we adapt after the mask as well, the mask is created in adapt_tree
             call adapt_tree( time, params, hvy_block, tree_ID_flow, params%coarsening_indicator, hvy_tmp, &
-                hvy_mask=hvy_mask, hvy_work=hvy_work)
+                hvy_mask=hvy_mask, hvy_work=hvy_work, log_jmax_detail=.true.)
         endif
         call toc( "TOPLEVEL: adapt mesh", 14, MPI_wtime()-t4)
         Nblocks = lgt_n(tree_ID_flow)

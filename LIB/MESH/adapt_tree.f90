@@ -8,7 +8,7 @@
 !
 !> \note It is well possible to start with a very fine mesh and end up with only one active
 !! block after this routine. You do *NOT* have to call it several times.
-subroutine adapt_tree( time, params, hvy_block, tree_ID, indicator, hvy_tmp, hvy_work, hvy_mask, ignore_coarsening, ignore_maxlevel, init_full_tree_grid )
+subroutine adapt_tree( time, params, hvy_block, tree_ID, indicator, hvy_tmp, hvy_work, hvy_mask, ignore_coarsening, ignore_maxlevel, init_full_tree_grid, log_jmax_detail )
     ! it is not technically required to include the module here, but for VS code it reduces the number of wrong "errors"
     use module_params
     
@@ -36,6 +36,8 @@ subroutine adapt_tree( time, params, hvy_block, tree_ID, indicator, hvy_tmp, hvy
     logical, intent(in), optional       :: ignore_maxlevel
     !> Maybe we already have a full tree grid, so we do not need to initialize it
     logical, intent(in), optional       :: init_full_tree_grid
+    !> Log the largest wavelet detail / threshold on Jmax blocks to jmax_detail.t (only for the flow tree in the main loop)
+    logical, intent(in), optional       :: log_jmax_detail
     
     ! loop variables
     integer(kind=ik)                    :: iteration, k, lgt_id
@@ -164,7 +166,7 @@ subroutine adapt_tree( time, params, hvy_block, tree_ID, indicator, hvy_tmp, hvy
         t_block = MPI_Wtime()
         ! Mask will only be passed on if it is present
         call coarseningIndicator_tree( time, params, hvy_block, hvy_tmp, tree_ID, indicator, &
-            ignore_maxlevel=ignore_maxlevel_apply, input_is_WD=.true., hvy_mask=hvy_mask, norm_inout=norm)
+            ignore_maxlevel=ignore_maxlevel_apply, input_is_WD=.true., hvy_mask=hvy_mask, norm_inout=norm, log_jmax_detail=log_jmax_detail)
         call toc( "adapt_tree (coarseningIndicator_tree)", 108, MPI_Wtime()-t_block )
 
         ! After coarseningIndicator_tree, the situation is:

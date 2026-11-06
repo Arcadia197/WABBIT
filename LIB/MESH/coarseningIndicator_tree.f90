@@ -2,7 +2,7 @@
 !> This method goes a bit against the naming convention, as for default wavelet cases it acts
 !! level-wise or leaf-wise but for specific indicators (everywhere or random) it acts on the whole tree.
 subroutine coarseningIndicator_tree( time, params, hvy_block, hvy_tmp, &
-    tree_ID, indicator, ignore_maxlevel, input_is_WD, hvy_mask, norm_inout)
+    tree_ID, indicator, ignore_maxlevel, input_is_WD, hvy_mask, norm_inout, log_jmax_detail)
 
     use module_indicators
 
@@ -24,6 +24,9 @@ subroutine coarseningIndicator_tree( time, params, hvy_block, hvy_tmp, &
     !! level so the "force_maxlevel_dealiasing" option needs to be overwritten. Life is difficult, at times.
     logical, intent(in)                 :: ignore_maxlevel
     real(kind=rk), intent(inout), optional :: norm_inout(:)  !< We can output the norm as well
+    !> Log the largest detail/threshold ratio on Jmax blocks to jmax_detail.t (wavelet indicators only, not with force_maxlevel_dealiasing).
+    !! Blocks on Jmax cannot be refined, so a ratio > 1 there means the grid is under-resolved.
+    logical, intent(in), optional       :: log_jmax_detail
 
     ! local variables
     integer(kind=ik) :: k_b, k_nc, Jmax, n_eqn, lgt_ID, g, mpierr, hvy_ID, p, N_thresholding_components, tags, tags_all, ierr, ref_stat, level
@@ -33,6 +36,10 @@ subroutine coarseningIndicator_tree( time, params, hvy_block, hvy_tmp, &
     real(kind=rk), allocatable, save :: norm(:)
     logical :: consider_hvy_tmp, inputIsWD, use_hardcode_norm
     real(kind=rk) :: t0  !< timing for debugging
+    ! Jmax detail monitoring
+    logical :: jmax_log
+    ! detail_ratio: per block. jmax_vals: (1:n_eqn) max ratio, (n_eqn+1:2*n_eqn) number of blocks with ratio>1, (2*n_eqn+1) number of blocks with any ratio>1
+    real(kind=rk) :: detail_ratio(1:size(hvy_block,4)), jmax_vals(1:2*params%n_eqn+1), jmax_vals_all(1:2*params%n_eqn+1)
 
     ! NOTE: after 24/08/2022, the arrays lgt_active/lgt_n hvy_active/hvy_n as well as lgt_sortednumlist,
     ! hvy_neighbors, tree_N and lgt_block are global variables included via the module_forestMetaData. This is not
@@ -297,6 +304,10 @@ subroutine coarseningIndicator_tree( time, params, hvy_block, hvy_tmp, &
         ! NOTE: even if additional mask thresholding is used, passing the mask is optional,
         ! notably because of the ghost nodes unit test, where random refinement / coarsening
         ! is used. hence, checking the flag params%threshold_mask alone is not enough.
+        jmax_log = .false.
+        if (present(log_jmax_detail)) jmax_log = log_jmax_detail .and. .not. (params%force_maxlevel_dealiasing .and. .not. ignore_maxlevel)
+        jmax_vals = 0.0_rk
+
         do k_b = 1, hvy_n(tree_ID)
             hvy_ID = hvy_active(k_b, tree_ID)
             call hvy2lgt( lgt_ID, hvy_ID, params%rank, params%number_blocks )
@@ -309,11 +320,34 @@ subroutine coarseningIndicator_tree( time, params, hvy_block, hvy_tmp, &
                 lgt_block(lgt_ID, IDX_REFINE_STS) = -1
             else
                 ! evaluate the criterion on this block.
+                detail_ratio = 0.0_rk
                 call coarseningIndicator_block( params, hvy_block(:,:,:,:,hvy_ID), &
                 hvy_tmp(:,:,:,:,hvy_ID), indicator, &
-                lgt_block(lgt_ID, IDX_REFINE_STS), norm, level, inputIsWD)
+                lgt_block(lgt_ID, IDX_REFINE_STS), norm, level, inputIsWD, detail_ratio=detail_ratio)
+
+                ! detail on Jmax blocks (0 for components that are not thresholded)
+                if (jmax_log .and. level == Jmax) then
+                    jmax_vals(1:n_eqn) = max(jmax_vals(1:n_eqn), detail_ratio(1:n_eqn))
+                    jmax_vals(n_eqn+1:2*n_eqn) = jmax_vals(n_eqn+1:2*n_eqn) + merge(1.0_rk, 0.0_rk, detail_ratio(1:n_eqn) > 1.0_rk)
+                    if (any(detail_ratio(1:n_eqn) > 1.0_rk)) jmax_vals(2*n_eqn+1) = jmax_vals(2*n_eqn+1) + 1.0_rk
+                endif
             endif
         enddo
+
+        ! Columns of jmax_detail.t: time, max(detail/threshold) per component, number of Jmax blocks with
+        ! detail/threshold > 1 per component, number of Jmax blocks where any component exceeds. The wavelet
+        ! coefficients are those after the coarse extension in the decomposition (the ones the criterion sees).
+        if (jmax_log) then
+            ! only rank 0 writes the t-file (WABBIT_COMM is MPI_COMM_WORLD), so a reduce to rank 0 is enough
+            jmax_vals_all = 0.0_rk
+            ! The light data is the same on all ranks, so all ranks agree here if there are blocks on Jmax at all. If not, all
+            ! values are 0 and we skip the communication.
+            if (maxActiveLevel_tree(tree_ID) == Jmax) then
+                call MPI_REDUCE(jmax_vals(1:n_eqn), jmax_vals_all(1:n_eqn), n_eqn, MPI_DOUBLE_PRECISION, MPI_MAX, 0, WABBIT_COMM, mpierr)
+                call MPI_REDUCE(jmax_vals(n_eqn+1:2*n_eqn+1), jmax_vals_all(n_eqn+1:2*n_eqn+1), n_eqn+1, MPI_DOUBLE_PRECISION, MPI_SUM, 0, WABBIT_COMM, mpierr)
+            endif
+            if (params%rank == 0) call append_t_file('jmax_detail_ratio.t', (/time, jmax_vals_all/))
+        endif
         call toc( "coarseningIndicator (coarseIndicator_block)", 123, MPI_Wtime()-t0 )
 
     end select
