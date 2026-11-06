@@ -36,7 +36,7 @@ subroutine adapt_tree( time, params, hvy_block, tree_ID, indicator, hvy_tmp, hvy
     logical, intent(in), optional       :: ignore_maxlevel
     !> Maybe we already have a full tree grid, so we do not need to initialize it
     logical, intent(in), optional       :: init_full_tree_grid
-    !> Log the largest wavelet detail / threshold on Jmax blocks to jmax_detail.t (only for the flow tree in the main loop)
+    !> Log the largest wavelet detail / threshold on Jmax blocks to jmax_detail_ratio.t (only for the flow tree in the main loop)
     logical, intent(in), optional       :: log_jmax_detail
     
     ! loop variables

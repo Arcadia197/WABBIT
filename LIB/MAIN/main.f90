@@ -264,9 +264,9 @@ program main
             write(tfile_headers(1+params%n_eqn+i_eqn), '(A,i0)') "N_blocks_above_c", i_eqn
         enddo
         tfile_headers(2+2*params%n_eqn) = "N_blocks_above_any"
-        call init_t_file('jmax_detail.t', overwrite, tfile_headers(1:2+2*params%n_eqn) )
+        call init_t_file('jmax_detail_ratio.t', overwrite, tfile_headers(1:2+2*params%n_eqn) )
     else
-        call init_t_file('jmax_detail.t', overwrite)
+        call init_t_file('jmax_detail_ratio.t', overwrite)
     endif
 
     call init_probes_file(params, overwrite)

@@ -24,7 +24,7 @@ subroutine coarseningIndicator_tree( time, params, hvy_block, hvy_tmp, &
     !! level so the "force_maxlevel_dealiasing" option needs to be overwritten. Life is difficult, at times.
     logical, intent(in)                 :: ignore_maxlevel
     real(kind=rk), intent(inout), optional :: norm_inout(:)  !< We can output the norm as well
-    !> Log the largest detail/threshold ratio on Jmax blocks to jmax_detail.t (wavelet indicators only, not with force_maxlevel_dealiasing).
+    !> Log the largest detail/threshold ratio on Jmax blocks to jmax_detail_ratio.t (wavelet indicators only, not with force_maxlevel_dealiasing).
     !! Blocks on Jmax cannot be refined, so a ratio > 1 there means the grid is under-resolved.
     logical, intent(in), optional       :: log_jmax_detail
 
@@ -334,7 +334,7 @@ subroutine coarseningIndicator_tree( time, params, hvy_block, hvy_tmp, &
             endif
         enddo
 
-        ! Columns of jmax_detail.t: time, max(detail/threshold) per component, number of Jmax blocks with
+        ! Columns of jmax_detail_ratio.t: time, max(detail/threshold) per component, number of Jmax blocks with
         ! detail/threshold > 1 per component, number of Jmax blocks where any component exceeds. The wavelet
         ! coefficients are those after the coarse extension in the decomposition (the ones the criterion sees).
         if (jmax_log) then
